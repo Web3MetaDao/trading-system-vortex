@@ -1,0 +1,137 @@
+signals:
+  - key: order_book_imbalance
+    label: Order Book Imbalance (OBI)
+    layer: A
+    family: microstructure
+    role: breakout_confirmation
+    timeframe: ms_to_minutes
+    priority: phase_4
+    data_status: external_required
+  - key: liquidity_gap_fvg
+    label: Liquidity Gaps / FVG
+    layer: A
+    family: price_structure
+    role: breakout_pathing
+    timeframe: seconds_to_minutes
+    priority: phase_2
+    data_status: derivable_partial
+  - key: footprint_absorption
+    label: Footprint / Absorption
+    layer: A
+    family: orderflow
+    role: reversal_trap_detection
+    timeframe: seconds_to_minutes
+    priority: phase_4
+    data_status: external_required
+  - key: cvd_divergence
+    label: CVD Divergence
+    layer: B
+    family: orderflow
+    role: false_breakout_filter
+    timeframe: minutes
+    priority: phase_1
+    data_status: external_required
+  - key: liquidity_heatmap
+    label: Liquidity Heatmap
+    layer: C
+    family: derivatives
+    role: target_and_risk_map
+    timeframe: minutes_to_hours
+    priority: phase_2
+    data_status: external_required
+  - key: aggregated_tape
+    label: Aggregated Tape
+    layer: A
+    family: tape
+    role: breakout_confirmation
+    timeframe: seconds
+    priority: phase_4
+    data_status: external_required
+  - key: intermarket_pulse
+    label: Inter-market Pulse
+    layer: A
+    family: macro
+    role: regime_confirmation
+    timeframe: minutes
+    priority: phase_3
+    data_status: external_required
+  - key: stablecoin_net_flow
+    label: Stablecoin Net Flow
+    layer: A
+    family: flow
+    role: liquidity_inflow_filter
+    timeframe: minutes_to_hours
+    priority: phase_3
+    data_status: external_required
+  - key: vwap_standard_deviation
+    label: VWAP Standard Deviation
+    layer: B
+    family: structure
+    role: extension_filter
+    timeframe: 15m_to_1h
+    priority: phase_1
+    data_status: derivable_partial
+  - key: funding_rate_shift
+    label: Funding Rate Shift
+    layer: B
+    family: derivatives
+    role: crowding_filter
+    timeframe: 1h_to_4h
+    priority: phase_1
+    data_status: external_required
+  - key: open_interest_change
+    label: Open Interest (OI) Change
+    layer: B
+    family: derivatives
+    role: breakout_validation
+    timeframe: minutes_to_hours
+    priority: phase_1
+    data_status: external_required
+  - key: skew_25d
+    label: 25Delta Skew
+    layer: A
+    family: options
+    role: panic_warning
+    timeframe: daily
+    priority: phase_3
+    data_status: external_required
+  - key: td_sequential
+    label: TD Sequential
+    layer: A
+    family: exhaustion
+    role: trend_exhaustion_filter
+    timeframe: 1h_to_daily
+    priority: phase_3
+    data_status: derivable
+  - key: market_realized_gradient
+    label: Market Realized Gradient
+    layer: A
+    family: onchain_momentum
+    role: regime_filter
+    timeframe: 4h_to_daily
+    priority: phase_3
+    data_status: external_required
+  - key: sth_mvrv_oscillator
+    label: STH-MVRV Oscillator
+    layer: A
+    family: onchain_cost_basis
+    role: dip_context_filter
+    timeframe: 4h_to_daily
+    priority: phase_3
+    data_status: external_required
+  - key: btc_shutdown_price
+    label: BTC Shutdown Price
+    layer: A
+    family: miner_cost
+    role: macro_support_map
+    timeframe: cycle
+    priority: phase_3
+    data_status: external_required
+  - key: hash_ribbons
+    label: Hash Ribbons
+    layer: A
+    family: miner_behavior
+    role: macro_trend_confirmation
+    timeframe: weekly
+    priority: phase_3
+    data_status: external_required

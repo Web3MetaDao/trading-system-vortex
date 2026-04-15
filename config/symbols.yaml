@@ -1,0 +1,8 @@
+core_watchlist:
+  - BTCUSDT
+  - ETHUSDT
+rotation_watchlist:
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+ignore_list: []

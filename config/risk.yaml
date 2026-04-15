@@ -1,0 +1,12 @@
+capital_usdt: 100
+risk_per_trade_pct: 2.5
+daily_stop_loss_pct: 5.0
+max_total_exposure_pct: 50
+max_open_positions: 3
+consecutive_loss_pause: 3
+hard_stop_required: true
+allow_withdrawal: false
+stop_loss_pct: 2.0
+take_profit_pct: 3.5
+ema_exit_period: 12
+performance_recent_n: 10

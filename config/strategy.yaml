@@ -1,0 +1,128 @@
+mode: spot
+execution_mode: paper
+allowed_symbols:
+  - BTCUSDT
+  - ETHUSDT
+market_states:
+  - S1
+  - S2
+  - S3
+  - S4
+  - S5
+benchmark_symbol: BTCUSDT
+market_data:
+  state_interval: 4h
+  state_limit: 120
+  signal_interval: 1h
+  signal_limit: 120
+
+# Phase-2 extensibility skeleton
+# Purpose: reserve config slots for higher-signal features without breaking the current bar-based engine.
+feature_flags:
+  use_vwap_dev: true
+  use_intermarket_filter: true
+  use_oi_change: true
+  use_funding_shift: true
+
+signal_features:
+  vwap_dev:
+    enabled: false
+    interval: 1h
+    lookback_bars: 24
+    stddev_period: 20
+    extreme_zscore: 2.0
+    mean_revert_zscore: 1.5
+    breakout_zscore: 0.5
+    score_bonus_reclaim: 1
+    score_bonus_breakout: 1
+    score_penalty_exhaustion: 1
+
+macro_filters:
+  intermarket:
+    enabled: true
+    reference_assets:
+      - BTCUSDT
+      - ETHUSDT
+      - NQ100
+      - DXY
+    btc_vs_nq_positive_min: 0.2
+    btc_vs_dxy_negative_max: -0.2
+    score_bonus_risk_on: 1
+    score_penalty_risk_off: 1
+    state_override_risk_off: true
+
+derivatives_filters:
+  oi_change:
+    enabled: true
+    venue: binance_futures
+    interval: 1h
+    lookback_bars: 12
+    strong_build_up_pct: 5.0
+    weak_build_up_pct: 2.0
+    score_bonus_trend_confirm: 1
+    score_penalty_squeeze_risk: 1
+  funding_shift:
+    enabled: true
+    venue: binance_futures
+    lookback_points: 8
+    extreme_positive_threshold: 0.03
+    extreme_negative_threshold: -0.03
+    score_bonus_contrarian: 1
+    score_penalty_crowded: 1
+
+state_params:
+  ema_fast_period: 20
+  ema_slow_period: 50
+  trend_up_min_pct: 2.0
+  trend_strong_min_pct: 5.0
+  trend_down_min_pct: -2.0
+  danger_down_min_pct: -6.0
+  close_near_high_min: 0.68
+  close_near_low_max: 0.32
+  high_volatility_min_pct: 8.0
+  s5_requires_bearish_ema_alignment: true
+signal_levels:
+  A:
+    enabled: false
+    max_positions: 2
+    min_score: 10
+  B:
+    enabled: true
+    max_positions: 3
+    min_score: 3
+  C:
+    enabled: false
+signal_params:
+  ema_fast_period: 20
+  ema_slow_period: 50
+  recent_window: 20
+  momentum_strong_min_pct: 2.5
+  momentum_positive_min_pct: 1.0
+  momentum_negative_max_pct: -1.0
+  momentum_weak_max_pct: -2.5
+  close_near_high_min: 0.75
+  close_near_low_max: 0.25
+  high_quote_volume_min: 500000000
+  excess_intraday_volatility_min_pct: 8.0
+  ema_alignment_bonus: 2
+  breakout_bonus: 2
+  pullback_bonus: 2
+  breakdown_penalty: 3
+setup_filters:
+  require_setup_for_buy: true
+  breakout:
+    enabled: true
+    lookback_bars: 20
+    require_market_states:
+      - S1
+      - S2
+  pullback:
+    enabled: true
+    require_market_states:
+      - S1
+      - S2
+  reclaim:
+    enabled: true
+    require_market_states:
+      - S1
+      - S2
