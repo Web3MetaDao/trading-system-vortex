@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson as json
 import logging
 import os
 import time
@@ -303,7 +303,7 @@ class BinanceWebSocketClient:
 
     async def _process_message(self, raw_message: str):
         try:
-            data = json.loads(raw_message)
+            data = json.loads(raw_message)  # Optimized with orjson
             event_type = self._extract_event_type(data)
             symbol = data.get("s") or data.get("symbol")
 
