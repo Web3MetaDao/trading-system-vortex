@@ -20,41 +20,78 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environments
+.env
+.venv
+env/
 venv/
 ENV/
-env/
+env.bak/
+venv.bak/
+
+# Environment & secrets (NEVER commit these)
+.env.local
+.env.production
+*.key
+*.pem
+secrets/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+nosetests.xml
+test-results/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Linting
+.ruff_cache/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
 .DS_Store
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Logs
-logs/
-*.log
-
-# Cache
-.mypy_cache/
-.cache/
-
-# Temporary files
-*.tmp
-*.bak
-*.swp
-
-# OS
-.DS_Store
 Thumbs.db
 
-# Project specific
-__MACOSX/
-.pytest_cache/
+# Logs & runtime data
+logs/
+*.log
+*.log.*
+pids/
+*.pid
+*.seed
+
+# Model files (large binaries — use Git LFS if needed)
+models/*.zip
+models/*.pkl
+models/*.pt
+models/*.h5
+
+# Data & cache
+data/
+*.csv
+*.parquet
+*.feather
+cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Backup files
+*.bak
+*.orig
+*.tmp

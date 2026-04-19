@@ -114,7 +114,7 @@ async def run_vortex_v4() -> None:
                     # [FIX] 在 paper 模式下记录机会但不实际执行
                     if trading_mode == "live":
                         logger.warning(
-                            "[ARB] LIVE mode: execution not implemented in startup_v4, "
+                            "[ARB] LIVE mode: execution not implemented in startup, "
                             "use automated_trading.py for live trading"
                         )
                 else:
