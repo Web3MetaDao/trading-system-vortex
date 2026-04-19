@@ -78,7 +78,6 @@ class StrategyLabSmokeTests(unittest.TestCase):
         self.assertLessEqual(counts.get("attribution", 0), 3)
         self.assertLessEqual(counts.get("objective", 0), 2)
 
-
     def test_build_tuning_plan_emits_patch_and_validation_steps(self):
         results = [
             {
@@ -109,11 +108,12 @@ class StrategyLabSmokeTests(unittest.TestCase):
         summary = strategy_lab.build_learning_summary(ranked)
         plan = strategy_lab.build_tuning_plan(ranked, summary)
         self.assertEqual(plan["winner_baseline"]["candidate"], "breakout_only_strict")
-        self.assertEqual(plan["recommended_patch"]["strategy"]["signal_levels"]["B"]["min_score"], 5)
+        self.assertEqual(
+            plan["recommended_patch"]["strategy"]["signal_levels"]["B"]["min_score"], 5
+        )
         self.assertTrue(plan["recommended_patch"]["strategy"]["backtest"]["allow_s3_entries"])
         self.assertEqual(plan["recommended_patch"]["risk"]["ema_exit_period"], 34)
         self.assertGreaterEqual(len(plan["validation_checks"]), 3)
-
 
     def test_write_tuning_plan_artifacts_writes_files(self):
         out_dir = ROOT / "logs" / "test_tuning_artifacts"
@@ -144,7 +144,6 @@ class StrategyLabSmokeTests(unittest.TestCase):
                 for child in out_dir.iterdir():
                     child.unlink()
                 out_dir.rmdir()
-
 
     def test_build_next_experiments_uses_blocked_reason_relief(self):
         results = [
@@ -180,7 +179,6 @@ class StrategyLabSmokeTests(unittest.TestCase):
         names = {item["name"] for item in experiments}
         self.assertIn("setup_requirement_relief_probe", names)
         self.assertIn("score_threshold_relief_probe", names)
-
 
     def test_build_next_experiments_prioritizes_blocked_reason_when_zero_trade_dominates(self):
         results = [

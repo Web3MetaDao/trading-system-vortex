@@ -16,7 +16,8 @@ if str(SRC) not in sys.path:
 class QuickBacktestImportTests(unittest.TestCase):
     def test_import_backtest(self):
         try:
-            from quick_backtest import QuickBacktest, BacktestConfig, BacktestMetrics
+            from quick_backtest import BacktestConfig, BacktestMetrics, QuickBacktest
+
             self.assertTrue(True)
         except ImportError as e:
             self.fail(f"Failed to import QuickBacktest: {e}")

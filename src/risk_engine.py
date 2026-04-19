@@ -181,8 +181,10 @@ class RiskEngine:
         if pnl_pct > peak_pnl_pct:
             position["peak_pnl_pct"] = pnl_pct
 
-        trailing_stop_pct = 1.5
-        if peak_pnl_pct >= 2.0 and pnl_pct <= peak_pnl_pct - trailing_stop_pct:
+        # [FIX] 从配置读取，消除硬编码（原值: trailing_stop_pct=1.5, activation=2.0）
+        trailing_stop_pct = float(self.config.get("trailing_stop_pct", 1.5))
+        trailing_stop_activation_pct = float(self.config.get("trailing_stop_activation_pct", 2.0))
+        if peak_pnl_pct >= trailing_stop_activation_pct and pnl_pct <= peak_pnl_pct - trailing_stop_pct:
             return f"trailing_stop ({pnl_pct:.2f}%)"
 
         if market_state == "S5":

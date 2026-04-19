@@ -1,12 +1,78 @@
+# ============================================================
+# VORTEX Trading System - 风控配置文件 (v2.0 - 机构级重构)
+# ============================================================
+# [FIX v2.0] 补全以下体检发现的缺失参数：
+#   - grade_a_max_position_pct   (risk_engine.py L30)
+#   - grade_a_risk_multiplier    (risk_engine.py L29)
+#   - grade_b_max_position_pct   (risk_engine.py L31)
+#   - grade_b_risk_multiplier    (risk_engine.py L29)
+#   - trailing_stop_pct          (risk_engine.py L184, 原硬编码为 1.5)
+#   - trailing_stop_activation_pct (新增：激活浮盈阈值，原硬编码为 2.0)
+# ============================================================
+
+# ── 资金管理 ─────────────────────────────────────────────────
+# 账户总资金（USDT）
 capital_usdt: 100
+
+# 单笔风险敞口（占总资金的百分比）
+# 机构标准：单笔风险 ≤ 1-2%，激进策略不超过 3%
 risk_per_trade_pct: 2.5
-daily_stop_loss_pct: 5.0
-max_total_exposure_pct: 50
-max_open_positions: 3
-consecutive_loss_pause: 3
-hard_stop_required: true
-allow_withdrawal: false
+
+# ── 止损 / 止盈 ──────────────────────────────────────────────
+# 固定止损百分比（从开仓价计算）
 stop_loss_pct: 2.0
+
+# 固定止盈百分比（从开仓价计算）
 take_profit_pct: 3.5
+
+# 移动止损回撤幅度（从峰值浮盈回撤超过此值则触发）
+# [FIX] 原硬编码为 1.5，现从配置文件读取
+trailing_stop_pct: 1.5
+
+# 移动止损激活阈值（浮盈达到此值后才启用移动止损）
+# [FIX] 原硬编码为 2.0，现从配置文件读取
+trailing_stop_activation_pct: 2.0
+
+# EMA 退出信号参考周期
 ema_exit_period: 12
+
+# ── 信号分级仓位控制 ─────────────────────────────────────────
+# A 级信号风险乘数（相对于基础风险敞口的倍数）
+# [FIX] 原缺失，risk_engine.py 使用默认值 1.5
+grade_a_risk_multiplier: 1.5
+
+# B 级信号风险乘数
+# [FIX] 原缺失，risk_engine.py 使用默认值 0.8
+grade_b_risk_multiplier: 0.8
+
+# A 级信号最大单仓占总资金比例（%）
+# [FIX] 原缺失，risk_engine.py 使用默认值 15.0
+grade_a_max_position_pct: 15.0
+
+# B 级信号最大单仓占总资金比例（%）
+# [FIX] 原缺失，risk_engine.py 使用默认值 8.0
+grade_b_max_position_pct: 8.0
+
+# ── 组合风控 ─────────────────────────────────────────────────
+# 最大同时持仓数量
+max_open_positions: 3
+
+# 最大总敞口占总资金比例（%）
+max_total_exposure_pct: 50
+
+# 每日最大亏损比例（%），超过后暂停当日交易（0 = 不限制）
+daily_stop_loss_pct: 5.0
+
+# 连续亏损次数触发暂停（0 = 不限制）
+consecutive_loss_pause: 3
+
+# ── 运营控制 ─────────────────────────────────────────────────
+# 是否强制要求硬止损（不允许无止损开仓）
+hard_stop_required: true
+
+# 是否允许从交易账户提现（生产环境建议关闭）
+allow_withdrawal: false
+
+# ── 绩效统计 ─────────────────────────────────────────────────
+# 绩效统计的最近 N 笔交易窗口
 performance_recent_n: 10

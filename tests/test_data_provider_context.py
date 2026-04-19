@@ -7,11 +7,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from backtest import build_snapshot
-from data_provider import UnifiedDataProvider
-from market_data import MarketSnapshot
-from risk_engine import RiskEngine
-from signal_engine import SignalEngine
+from backtest import build_snapshot  # noqa: E402
+from data_provider import UnifiedDataProvider  # noqa: E402
+from market_data import MarketSnapshot  # noqa: E402
+from risk_engine import RiskEngine  # noqa: E402
+from signal_engine import SignalEngine  # noqa: E402
 
 
 class _FakeMarketClient:

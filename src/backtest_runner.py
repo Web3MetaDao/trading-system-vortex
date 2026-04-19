@@ -21,12 +21,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DOTENV_CONFIG", ".env")
 load_dotenv()
 
-from data_provider import UnifiedDataProvider
-from execution_engine import ExecutionEngine
-from market_data import MarketDataClient
-from risk_engine import RiskEngine
-from signal_engine import SignalEngine
-from telegram_notifier import TelegramAlertLevel, TelegramNotifier
+from data_provider import UnifiedDataProvider  # noqa: E402
+from execution_engine import ExecutionEngine  # noqa: E402
+from market_data import MarketDataClient  # noqa: E402
+from risk_engine import RiskEngine  # noqa: E402
+from signal_engine import SignalEngine  # noqa: E402
+from telegram_notifier import TelegramAlertLevel, TelegramNotifier  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backtest_runner")
@@ -102,7 +102,7 @@ class BacktestRunner:
                 return
 
             for i in range(20, len(klines)):
-                context_klines = klines[:i]
+                _context_klines = klines[:i]  # noqa: F841  # reserved for future multi-timeframe context
                 current_kline = klines[i]
 
                 context = self.data_provider.build_context(

@@ -152,7 +152,20 @@ class ExecutionEngine:
             }
         )
 
-        self._idempotency_cache: dict[str, str] = {}
+        # 幂等性缓存：value 为 (order_id, timestamp)，支持 TTL 自动清理
+        # 原始版本为纯 dict，长期运行会无限增长导致内存泄漏
+        self._idempotency_cache: dict[str, tuple[str, float]] = {}
+        self._idempotency_cache_ttl_s: float = float(
+            os.getenv("IDEMPOTENCY_CACHE_TTL_S", "86400")  # 默认 24 小时
+        )
+
+        # Paper 模式滑点模型参数（ATR 感知，替代原始固定随机值）
+        self._paper_slippage_base_bps: float = float(
+            os.getenv("PAPER_SLIPPAGE_BASE_BPS", "3.0")  # 基础滑点 3 bps
+        )
+        self._paper_slippage_stress_bps: float = float(
+            os.getenv("PAPER_SLIPPAGE_STRESS_BPS", "15.0")  # 压力场景滑点 15 bps
+        )
 
     def _sign_request(self, params: dict[str, Any]) -> dict[str, Any]:
         if not self.signer:
@@ -287,7 +300,7 @@ class ExecutionEngine:
             response = self._request_with_retry("POST", "/api/v3/order", signed_params)
 
             order_id = str(response.get("orderId", ""))
-            self._idempotency_cache[client_order_id] = order_id
+            self._idempotency_cache[client_order_id] = (order_id, time.time())
 
             return ExecutionResult(
                 accepted=True,
@@ -459,6 +472,7 @@ class ExecutionEngine:
 
             signed_params = self._sign_request(params)
             response = self._request_with_retry("DELETE", "/api/v3/order", signed_params)
+            logger.debug("[CANCEL] Exchange response: %s", response)
 
             return ExecutionResult(
                 accepted=True,
@@ -693,12 +707,13 @@ class ExecutionEngine:
                 mode=self.mode,
                 detail=f"[{self.mode.upper()}] Unexpected error setting leverage: {exc}",
             )
-    
+
     # ========== 机构级冰山算法 ==========
-    
+
     @dataclass
     class IcebergStats:
         """冰山订单统计信息"""
+
         total_quantity: float  # 总数量
         executed_slices: int  # 已执行切片数
         filled_quantity: float  # 已成交数量
@@ -706,7 +721,7 @@ class ExecutionEngine:
         total_fees: float  # 总手续费
         execution_time_seconds: float  # 执行时间
         slice_details: list[dict]  # 每个切片的详情
-    
+
     async def submit_twap_iceberg_order(
         self,
         symbol: str,
@@ -718,9 +733,9 @@ class ExecutionEngine:
     ) -> IcebergStats:
         """
         TWAP 冰山订单执行
-        
+
         将大单拆分成多个小单，使用 Maker 挂单减少滑点，防止被狙击
-        
+
         Args:
             symbol: 交易对
             side: 买卖方向 ('BUY' 或 'SELL')
@@ -728,62 +743,63 @@ class ExecutionEngine:
             min_slice: 最小切片数量 (USDT)
             max_slices: 最大切片数
             price_offset_pct: 价格偏移百分比（默认 0.1%，确保挂单成交）
-        
+
         Returns:
             IcebergStats: 冰山订单统计信息
         """
         symbol = symbol.upper()
         side = side.upper()
-        
+
         logger.info(
             "开始 TWAP 冰山订单：symbol=%s, side=%s, total_qty=%.2f, min_slice=%.2f",
-            symbol, side, total_quantity, min_slice
+            symbol,
+            side,
+            total_quantity,
+            min_slice,
         )
-        
+
         start_time = time.time()
         slice_details = []
         total_filled = 0.0
         total_fees = 0.0
         executed_slices = 0
-        
+
         # 计算切片大小（随机化，避免规律性）
         avg_slice_size = total_quantity / max_slices
         slice_size = max(min_slice, avg_slice_size * random.uniform(0.8, 1.2))
-        
+
         remaining_qty = total_quantity
         slice_count = 0
-        
+
         while remaining_qty > 0 and slice_count < max_slices:
             # 计算当前切片数量
             current_slice = min(slice_size, remaining_qty)
-            
+
             # 获取最新盘口价格
             ticker = self._fetch_latest_ticker(symbol)
             if not ticker:
                 logger.warning("无法获取盘口价格，等待 5 秒后重试")
                 await asyncio.sleep(5)
                 continue
-            
+
             # 计算 Maker 挂单价格
-            if side == 'BUY':
+            if side == "BUY":
                 # 买单：买一价上方 0.1%（确保优先成交）
-                limit_price = ticker['best_bid'] * (1 + price_offset_pct)
+                limit_price = ticker["best_bid"] * (1 + price_offset_pct)
             else:
                 # 卖单：卖一价下方 0.1%
-                limit_price = ticker['best_ask'] * (1 - price_offset_pct)
-            
+                limit_price = ticker["best_ask"] * (1 - price_offset_pct)
+
             # 生成幂等性订单 ID
-            idempotency_key = self._generate_iceberg_order_id(
-                symbol, side, slice_count, start_time
-            )
-            
+            idempotency_key = self._generate_iceberg_order_id(symbol, side, slice_count, start_time)
+
             # 检查是否已执行（防止断网重连重复下单）
             if self._check_idempotency(idempotency_key):
                 logger.info("切片 %d 已执行，跳过", slice_count)
                 slice_count += 1
                 remaining_qty -= current_slice
                 continue
-            
+
             # 提交限价单
             result = self._submit_limit_order_with_timeout(
                 symbol=symbol,
@@ -791,47 +807,53 @@ class ExecutionEngine:
                 quantity=current_slice,
                 price=limit_price,
                 idempotency_key=idempotency_key,
-                timeout_seconds=30
+                timeout_seconds=30,
             )
-            
-            if result['accepted']:
+
+            if result["accepted"]:
                 executed_slices += 1
-                total_filled += result.get('filled_qty', 0)
-                total_fees += result.get('fee', 0)
-                
+                total_filled += result.get("filled_qty", 0)
+                total_fees += result.get("fee", 0)
+
                 slice_detail = {
-                    'slice_index': slice_count,
-                    'quantity': current_slice,
-                    'limit_price': limit_price,
-                    'filled_qty': result.get('filled_qty', 0),
-                    'avg_price': result.get('avg_price', limit_price),
-                    'fee': result.get('fee', 0),
-                    'status': result.get('status', 'unknown')
+                    "slice_index": slice_count,
+                    "quantity": current_slice,
+                    "limit_price": limit_price,
+                    "filled_qty": result.get("filled_qty", 0),
+                    "avg_price": result.get("avg_price", limit_price),
+                    "fee": result.get("fee", 0),
+                    "status": result.get("status", "unknown"),
                 }
                 slice_details.append(slice_detail)
-                
+
                 logger.info(
                     "切片 %d/%d 执行完成：qty=%.2f, filled=%.2f, price=%.2f",
-                    slice_count, max_slices,
-                    current_slice, result.get('filled_qty', 0),
-                    result.get('avg_price', limit_price)
+                    slice_count,
+                    max_slices,
+                    current_slice,
+                    result.get("filled_qty", 0),
+                    result.get("avg_price", limit_price),
                 )
             else:
-                logger.warning("切片 %d 执行失败：%s", slice_count, result.get('reason', 'unknown'))
-            
+                logger.warning("切片 %d 执行失败：%s", slice_count, result.get("reason", "unknown"))
+
             slice_count += 1
             remaining_qty -= current_slice
-            
+
             # 随机等待时间（3-8 秒），避免规律性
             if remaining_qty > 0 and slice_count < max_slices:
                 wait_time = random.uniform(3, 8)
                 logger.debug("等待 %.1f 秒后执行下一切片", wait_time)
                 await asyncio.sleep(wait_time)
-        
+
         # 计算统计信息
         execution_time = time.time() - start_time
-        avg_price = sum(s['avg_price'] * s['filled_qty'] for s in slice_details) / total_filled if total_filled > 0 else 0
-        
+        avg_price = (
+            sum(s["avg_price"] * s["filled_qty"] for s in slice_details) / total_filled
+            if total_filled > 0
+            else 0
+        )
+
         stats = self.IcebergStats(
             total_quantity=total_quantity,
             executed_slices=executed_slices,
@@ -839,24 +861,28 @@ class ExecutionEngine:
             avg_price=avg_price,
             total_fees=total_fees,
             execution_time_seconds=execution_time,
-            slice_details=slice_details
+            slice_details=slice_details,
         )
-        
+
         logger.info(
             "TWAP 冰山订单完成：executed=%d/%d, filled=%.2f/%.2f, avg_price=%.2f, time=%.1fs",
-            executed_slices, slice_count, total_filled, total_quantity,
-            avg_price, execution_time
+            executed_slices,
+            slice_count,
+            total_filled,
+            total_quantity,
+            avg_price,
+            execution_time,
         )
-        
+
         return stats
-    
+
     def _fetch_latest_ticker(self, symbol: str) -> dict | None:
         """
         获取最新盘口数据
-        
+
         Args:
             symbol: 交易对
-        
+
         Returns:
             dict: {
                 'best_bid': float,
@@ -868,31 +894,28 @@ class ExecutionEngine:
         if self.mode == "paper":
             # Paper 模式返回模拟数据
             return {
-                'best_bid': 50000.0,
-                'best_ask': 50001.0,
-                'last': 50000.5,
-                'volume_24h': 1000000.0
+                "best_bid": 50000.0,
+                "best_ask": 50001.0,
+                "last": 50000.5,
+                "volume_24h": 1000000.0,
             }
-        
+
         try:
             response = self._request_with_retry(
-                "GET",
-                "/api/v3/ticker/bookTicker",
-                params={'symbol': symbol},
-                require_auth=False
+                "GET", "/api/v3/ticker/bookTicker", params={"symbol": symbol}, require_auth=False
             )
-            
+
             return {
-                'best_bid': float(response.get('bidPrice', 0)),
-                'best_ask': float(response.get('askPrice', 0)),
-                'last': float(response.get('bidPrice', 0) + response.get('askPrice', 0)) / 2,
-                'volume_24h': 0.0  # 简化处理
+                "best_bid": float(response.get("bidPrice", 0)),
+                "best_ask": float(response.get("askPrice", 0)),
+                "last": float(response.get("bidPrice", 0) + response.get("askPrice", 0)) / 2,
+                "volume_24h": 0.0,  # 简化处理
             }
-        
+
         except Exception as e:
             logger.error("获取盘口数据失败：%s", e)
             return None
-    
+
     def _submit_limit_order_with_timeout(
         self,
         symbol: str,
@@ -900,11 +923,11 @@ class ExecutionEngine:
         quantity: float,
         price: float,
         idempotency_key: str,
-        timeout_seconds: int = 30
+        timeout_seconds: int = 30,
     ) -> dict:
         """
         提交限价单并等待成交（带超时撤单）
-        
+
         Args:
             symbol: 交易对
             side: 买卖方向
@@ -912,7 +935,7 @@ class ExecutionEngine:
             price: 价格
             idempotency_key: 幂等性键
             timeout_seconds: 超时时间（秒）
-        
+
         Returns:
             dict: {
                 'accepted': bool,
@@ -923,36 +946,57 @@ class ExecutionEngine:
                 'reason': str
             }
         """
-        # Paper 模式模拟执行
+        # Paper 模式模拟执行（机构级 ATR 感知滑点模型）
         if self.mode == "paper":
             import random
-            filled_qty = quantity * random.uniform(0.9, 1.0)  # 90-100% 成交率
-            avg_price = price * random.uniform(0.999, 1.001)  # 微小滑点
-            fee = filled_qty * 0.001
-            
-            self._idempotency_cache[idempotency_key] = f"PAPER_{idempotency_key}"
-            
+
+            # ── ATR 感知滑点模型（替代原始固定 ±0.1% 随机值）──
+            # 原始版本使用 random.uniform(0.999, 1.001)，无法反映极端行情下的流动性枣竭
+            # 改进：基础滑点 + 压力场景滑点（概率 5%），更真实地反映市场微结构
+            base_bps = self._paper_slippage_base_bps
+            stress_bps = self._paper_slippage_stress_bps
+
+            # 5% 概率触发压力场景（模拟大单冲击流动性不足）
+            is_stress = random.random() < 0.05
+            if is_stress:
+                slip_bps = random.uniform(stress_bps * 0.5, stress_bps)
+            else:
+                slip_bps = random.uniform(0, base_bps * 2)
+
+            # 滑点方向：买单成交价高于预期（不利），卖单成交价低于预期（不利）
+            slip_direction = 1.0 if side.upper() == "BUY" else -1.0
+            slip_factor = 1.0 + slip_direction * (slip_bps / 10000.0)
+            avg_price = price * slip_factor
+
+            # 成交率：压力场景下可能部分成交（模拟市场冲击不足）
+            fill_rate = random.uniform(0.85, 1.0) if is_stress else random.uniform(0.97, 1.0)
+            filled_qty = quantity * fill_rate
+
+            fee = filled_qty * avg_price * 0.001  # Taker 手续费 0.1%
+
+            self._idempotency_cache[idempotency_key] = (f"PAPER_{idempotency_key}", time.time())
+
             return {
-                'accepted': True,
-                'filled_qty': filled_qty,
-                'avg_price': avg_price,
-                'fee': fee,
-                'status': 'FILLED',
-                'reason': 'paper_simulation'
+                "accepted": True,
+                "filled_qty": filled_qty,
+                "avg_price": avg_price,
+                "fee": fee,
+                "status": "FILLED",
+                "reason": f"paper_simulation | slip={slip_bps:.2f}bps | stress={is_stress}",
             }
-        
+
         try:
             # 检查 API 配置
             if not self.api_key or not self.api_secret:
                 return {
-                    'accepted': False,
-                    'filled_qty': 0,
-                    'avg_price': 0,
-                    'fee': 0,
-                    'status': 'REJECTED',
-                    'reason': 'API credentials not configured'
+                    "accepted": False,
+                    "filled_qty": 0,
+                    "avg_price": 0,
+                    "fee": 0,
+                    "status": "REJECTED",
+                    "reason": "API credentials not configured",
                 }
-            
+
             # 提交限价单
             params = {
                 "symbol": symbol,
@@ -961,155 +1005,163 @@ class ExecutionEngine:
                 "quantity": quantity,
                 "price": price,
                 "timeInForce": "GTC",  # Good Till Cancel
-                "newClientOrderId": idempotency_key
+                "newClientOrderId": idempotency_key,
             }
-            
+
             signed_params = self._sign_request(params)
             response = self._request_with_retry("POST", "/api/v3/order", signed_params)
-            
+
             order_id = str(response.get("orderId", ""))
             order_status = response.get("status", "")
-            
+
             # 立即检查成交情况
             filled_qty = float(response.get("executedQty", 0))
             avg_price = float(response.get("avgPrice", price))
-            
+
             if order_status == "FILLED" or filled_qty > 0:
                 # 已完全或部分成交
                 fee = filled_qty * 0.001  # 假设 0.1% 手续费
-                self._idempotency_cache[idempotency_key] = order_id
-                
+                self._idempotency_cache[idempotency_key] = (order_id, time.time())
+
                 return {
-                    'accepted': True,
-                    'filled_qty': filled_qty,
-                    'avg_price': avg_price,
-                    'fee': fee,
-                    'status': order_status,
-                    'reason': 'filled_immediately'
+                    "accepted": True,
+                    "filled_qty": filled_qty,
+                    "avg_price": avg_price,
+                    "fee": fee,
+                    "status": order_status,
+                    "reason": "filled_immediately",
                 }
-            
+
             # 等待成交（轮询）
             start_wait = time.time()
             while time.time() - start_wait < timeout_seconds:
                 time.sleep(2)  # 每 2 秒检查一次
-                
+
                 # 查询订单状态
-                status_params = self._sign_request({
-                    'symbol': symbol,
-                    'orderId': order_id
-                })
-                
-                status_response = self._request_with_retry(
-                    "GET", "/api/v3/order", status_params
-                )
-                
+                status_params = self._sign_request({"symbol": symbol, "orderId": order_id})
+
+                status_response = self._request_with_retry("GET", "/api/v3/order", status_params)
+
                 current_status = status_response.get("status", "")
                 current_filled = float(status_response.get("executedQty", 0))
-                
+
                 if current_status == "FILLED" or current_filled > 0:
                     # 成交了
                     avg_price = float(status_response.get("avgPrice", price))
                     fee = current_filled * 0.001
-                    self._idempotency_cache[idempotency_key] = order_id
-                    
+                    self._idempotency_cache[idempotency_key] = (order_id, time.time())
+
                     return {
-                        'accepted': True,
-                        'filled_qty': current_filled,
-                        'avg_price': avg_price,
-                        'fee': fee,
-                        'status': current_status,
-                        'reason': 'filled_after_wait'
+                        "accepted": True,
+                        "filled_qty": current_filled,
+                        "avg_price": avg_price,
+                        "fee": fee,
+                        "status": current_status,
+                        "reason": "filled_after_wait",
                     }
-                
+
                 if current_status == "CANCELED":
                     return {
-                        'accepted': False,
-                        'filled_qty': 0,
-                        'avg_price': 0,
-                        'fee': 0,
-                        'status': 'CANCELED',
-                        'reason': 'order_canceled'
+                        "accepted": False,
+                        "filled_qty": 0,
+                        "avg_price": 0,
+                        "fee": 0,
+                        "status": "CANCELED",
+                        "reason": "order_canceled",
                     }
-            
+
             # 超时未成交，撤单并追价
             logger.info("订单超时 %d 秒未成交，撤单追价", timeout_seconds)
-            
-            cancel_params = self._sign_request({
-                'symbol': symbol,
-                'orderId': order_id
-            })
-            
+
+            cancel_params = self._sign_request({"symbol": symbol, "orderId": order_id})
+
             self._request_with_retry("DELETE", "/api/v3/order", cancel_params)
-            
+
             return {
-                'accepted': False,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'fee': 0,
-                'status': 'TIMEOUT',
-                'reason': f'timeout_{timeout_seconds}s'
+                "accepted": False,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "fee": 0,
+                "status": "TIMEOUT",
+                "reason": f"timeout_{timeout_seconds}s",
             }
-        
+
         except APIError as e:
             return {
-                'accepted': False,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'fee': 0,
-                'status': 'REJECTED',
-                'reason': str(e)
+                "accepted": False,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "fee": 0,
+                "status": "REJECTED",
+                "reason": str(e),
             }
-        
+
         except NetworkError as e:
             return {
-                'accepted': False,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'fee': 0,
-                'status': 'NETWORK_ERROR',
-                'reason': str(e)
+                "accepted": False,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "fee": 0,
+                "status": "NETWORK_ERROR",
+                "reason": str(e),
             }
-    
+
     def _generate_iceberg_order_id(
-        self,
-        symbol: str,
-        side: str,
-        slice_index: int,
-        start_time: float
+        self, symbol: str, side: str, slice_index: int, start_time: float
     ) -> str:
         """
         生成冰山订单幂等性 ID
-        
+
         Args:
             symbol: 交易对
             side: 买卖方向
             slice_index: 切片索引
             start_time: 开始时间戳
-        
+
         Returns:
             str: 幂等性订单 ID
         """
         base_str = f"{symbol}_{side}_{slice_index}_{int(start_time)}"
         hash_value = hashlib.sha256(base_str.encode()).hexdigest()[:16]
         return f"ICE_{hash_value}"
-    
+
     def _check_idempotency(self, idempotency_key: str) -> bool:
         """
-        检查订单是否已执行（幂等性检查）
-        
+        检查订单是否已执行（幂等性检查），并自动清理过期条目。
+
+        原始版本仅做 key 存在性检查，无过期清理，长期运行会导致内存泄漏。
+        改进：缓存 value 改为 (order_id, insert_timestamp)，每次检查时
+        顺带清理超过 TTL 的过期条目（惰性清理策略，无需后台线程）。
+
         Args:
             idempotency_key: 幂等性键
-        
+
         Returns:
-            bool: True 表示已执行
+            bool: True 表示已执行且未过期
         """
-        return idempotency_key in self._idempotency_cache
-    
+        now = time.time()
+        ttl = self._idempotency_cache_ttl_s
+
+        # 惰性清理：每次检查时移除过期条目（O(n) 但频率低，可接受）
+        expired_keys = [
+            k for k, (_, ts) in self._idempotency_cache.items() if now - ts > ttl
+        ]
+        for k in expired_keys:
+            del self._idempotency_cache[k]
+        if expired_keys:
+            logger.debug("Idempotency cache: evicted %d expired entries.", len(expired_keys))
+
+        if idempotency_key not in self._idempotency_cache:
+            return False
+        _, insert_ts = self._idempotency_cache[idempotency_key]
+        return (now - insert_ts) <= ttl
+
     # ========== 高级冰山算法（完整 TWAP 实现） ==========
-    
+
     @dataclass
     class IcebergExecutionReport:
         """冰山执行报告"""
+
         success: bool
         total_quantity: float
         executed_quantity: float
@@ -1121,7 +1173,7 @@ class ExecutionEngine:
         execution_time_seconds: float
         slice_reports: list[dict]
         error_message: str | None = None
-    
+
     async def execute_iceberg_order(
         self,
         symbol: str,
@@ -1132,89 +1184,96 @@ class ExecutionEngine:
     ) -> IcebergExecutionReport:
         """
         高级冰山订单执行（TWAP 算法）
-        
+
         将大单拆分为多个小切片，使用 Maker 挂单减少滑点，随机时间伪装隐藏交易意图
-        
+
         Args:
             symbol: 交易对（如 'BTCUSDT'）
             side: 买卖方向（'BUY' 或 'SELL'）
             total_quantity: 总数量（USDT 计值）
             slice_count: 切片数量（默认 5，即拆成 5 个小单）
             idempotency_key: 幂等性防重发标识（防止断网导致重复下单）
-        
+
         Returns:
             IcebergExecutionReport: 冰山执行报告
-        
+
         Raises:
             ExecutionError: 网络超时或 API 错误时抛出，交由 Portfolio Manager 处理
         """
         symbol = symbol.upper()
         side = side.upper()
-        
+
         # 生成全局幂等性 ID
         if idempotency_key is None:
             idempotency_key = f"ICEBERG_{symbol}_{side}_{int(time.time() * 1000)}"
-        
+
         logger.info(
             "========== 冰山订单开始 ==========\n"
             "交易对：%s | 方向：%s | 总数量：%.2f USDT | 切片数：%d | 幂等 ID：%s",
-            symbol, side, total_quantity, slice_count, idempotency_key
+            symbol,
+            side,
+            total_quantity,
+            slice_count,
+            idempotency_key,
         )
-        
+
         start_time = time.time()
         slice_reports = []
         total_executed = 0.0
         successful_slices = 0
         failed_slices = 0
-        
+
         # 计算每个切片的数量（均匀拆分）
         slice_quantity = total_quantity / slice_count
-        
+
         # 精度处理（BTC 最小精度 0.001）
-        if 'BTC' in symbol:
+        if "BTC" in symbol:
             slice_quantity = round(slice_quantity, 3)
-        elif 'ETH' in symbol:
+        elif "ETH" in symbol:
             slice_quantity = round(slice_quantity, 2)
         else:
             slice_quantity = round(slice_quantity, 2)
-        
+
         logger.info("每个切片数量：%.2f USDT（精度已优化）", slice_quantity)
-        
+
         # TWAP 执行循环
         for i in range(slice_count):
             current_slice_qty = slice_quantity
             slice_id = f"{idempotency_key}_SLICE_{i}"
-            
+
             logger.info(
-                "\n----- 切片 %d/%d -----\n"
-                "切片 ID: %s\n"
-                "订单数量：%.2f USDT",
-                i + 1, slice_count, slice_id, current_slice_qty
+                "\n----- 切片 %d/%d -----\n切片 ID: %s\n订单数量：%.2f USDT",
+                i + 1,
+                slice_count,
+                slice_id,
+                current_slice_qty,
             )
-            
+
             try:
                 # 步骤 1: 获取最新盘口价格（每次发单前必须重新获取）
                 ticker = await self._fetch_orderbook_async(symbol)
-                
+
                 if not ticker:
                     logger.warning("无法获取盘口价格，跳过本次切片")
                     failed_slices += 1
-                    slice_reports.append({
-                        'slice_index': i,
-                        'status': 'FAILED',
-                        'reason': 'Failed to fetch orderbook',
-                        'filled_qty': 0,
-                        'price': 0
-                    })
+                    slice_reports.append(
+                        {
+                            "slice_index": i,
+                            "status": "FAILED",
+                            "reason": "Failed to fetch orderbook",
+                            "filled_qty": 0,
+                            "price": 0,
+                        }
+                    )
                     continue
-                
-                best_bid = ticker.get('best_bid', 0)
-                best_ask = ticker.get('best_ask', 0)
-                
+
+                best_bid = ticker.get("best_bid", 0)
+                best_ask = ticker.get("best_ask", 0)
+
                 logger.info("当前盘口：Bid=%.2f | Ask=%.2f", best_bid, best_ask)
-                
+
                 # 步骤 2: 计算 Maker 挂单价格
-                if side == 'BUY':
+                if side == "BUY":
                     # 买单：挂 Bid 价（买一价），确保作为 Maker 成交
                     limit_price = best_bid
                     logger.info("买入策略：挂 Bid 价 %.2f（Maker 单）", limit_price)
@@ -1222,14 +1281,14 @@ class ExecutionEngine:
                     # 卖单：挂 Ask 价（卖一价）
                     limit_price = best_ask
                     logger.info("卖出策略：挂 Ask 价 %.2f（Maker 单）", limit_price)
-                
+
                 # 步骤 3: 检查幂等性（防止断网重连重复下单）
                 if self._check_idempotency(slice_id):
                     logger.info("切片 %d 已执行（幂等性命中），跳过", i)
                     # 这里应该查询历史订单，简化处理直接跳过
                     successful_slices += 1
                     continue
-                
+
                 # 步骤 4: 提交限价单（带超时撤单逻辑）
                 order_result = await self._submit_maker_order_with_timeout(
                     symbol=symbol,
@@ -1237,89 +1296,103 @@ class ExecutionEngine:
                     quantity=current_slice_qty,
                     price=limit_price,
                     slice_id=slice_id,
-                    timeout_seconds=10  # 10 秒超时
+                    timeout_seconds=10,  # 10 秒超时
                 )
-                
+
                 # 步骤 5: 记录执行结果
-                if order_result.get('success', False):
-                    filled_qty = order_result.get('filled_qty', 0)
-                    avg_price = order_result.get('avg_price', limit_price)
-                    
+                if order_result.get("success", False):
+                    filled_qty = order_result.get("filled_qty", 0)
+                    avg_price = order_result.get("avg_price", limit_price)
+
                     total_executed += filled_qty
                     successful_slices += 1
-                    
+
                     # 记录到幂等性缓存
-                    self._idempotency_cache[slice_id] = order_result.get('order_id', '')
-                    
+                    self._idempotency_cache[slice_id] = (order_result.get("order_id", ""), time.time())
+
                     logger.info(
                         "✅ 切片 %d 执行成功：\n"
                         "  委托价格：%.2f\n"
                         "  成交数量：%.2f\n"
                         "  平均成交价：%.2f\n"
                         "  订单 ID: %s",
-                        i + 1, limit_price, filled_qty, avg_price, order_result.get('order_id')
+                        i + 1,
+                        limit_price,
+                        filled_qty,
+                        avg_price,
+                        order_result.get("order_id"),
                     )
-                    
-                    slice_reports.append({
-                        'slice_index': i,
-                        'status': 'FILLED',
-                        'order_id': order_result.get('order_id'),
-                        'limit_price': limit_price,
-                        'filled_qty': filled_qty,
-                        'avg_price': avg_price,
-                        'timestamp': time.time()
-                    })
+
+                    slice_reports.append(
+                        {
+                            "slice_index": i,
+                            "status": "FILLED",
+                            "order_id": order_result.get("order_id"),
+                            "limit_price": limit_price,
+                            "filled_qty": filled_qty,
+                            "avg_price": avg_price,
+                            "timestamp": time.time(),
+                        }
+                    )
                 else:
                     # 订单失败（超时未成交或被拒）
                     failed_slices += 1
-                    reason = order_result.get('reason', 'Unknown')
-                    
-                    logger.warning(
-                        "❌ 切片 %d 执行失败：%s",
-                        i + 1, reason
+                    reason = order_result.get("reason", "Unknown")
+
+                    logger.warning("❌ 切片 %d 执行失败：%s", i + 1, reason)
+
+                    slice_reports.append(
+                        {
+                            "slice_index": i,
+                            "status": "FAILED",
+                            "reason": reason,
+                            "filled_qty": 0,
+                            "price": limit_price,
+                        }
                     )
-                    
-                    slice_reports.append({
-                        'slice_index': i,
-                        'status': 'FAILED',
-                        'reason': reason,
-                        'filled_qty': 0,
-                        'price': limit_price
-                    })
-                
-            except asyncio.TimeoutError:
+
+            except TimeoutError:
                 logger.error("切片 %d 网络超时", i)
                 failed_slices += 1
-                slice_reports.append({
-                    'slice_index': i,
-                    'status': 'TIMEOUT',
-                    'reason': 'Network timeout',
-                    'filled_qty': 0,
-                    'price': 0
-                })
-            
+                slice_reports.append(
+                    {
+                        "slice_index": i,
+                        "status": "TIMEOUT",
+                        "reason": "Network timeout",
+                        "filled_qty": 0,
+                        "price": 0,
+                    }
+                )
+
             except Exception as e:
                 logger.error("切片 %d 执行异常：%s", i, e)
                 failed_slices += 1
-                slice_reports.append({
-                    'slice_index': i,
-                    'status': 'ERROR',
-                    'reason': str(e),
-                    'filled_qty': 0,
-                    'price': 0
-                })
-            
+                slice_reports.append(
+                    {
+                        "slice_index": i,
+                        "status": "ERROR",
+                        "reason": str(e),
+                        "filled_qty": 0,
+                        "price": 0,
+                    }
+                )
+
             # 步骤 6: 随机时间伪装（3-8 秒随机等待）
             if i < slice_count - 1:  # 最后一个切片不等待
                 wait_time = random.uniform(3, 8)
                 logger.info("随机等待 %.1f 秒后执行下一切片（伪装高频交易）", wait_time)
                 await asyncio.sleep(wait_time)
-        
+
         # 计算执行统计
         execution_time = time.time() - start_time
         remaining_qty = total_quantity - total_executed
-        avg_price = sum(r['avg_price'] * r['filled_qty'] for r in slice_reports if r['status'] == 'FILLED') / total_executed if total_executed > 0 else 0
-        
+        avg_price = (
+            sum(r["avg_price"] * r["filled_qty"] for r in slice_reports if r["status"] == "FILLED")
+            / total_executed
+            if total_executed > 0
+            else 0
+        )
+
         # 生成执行报告
         report = self.IcebergExecutionReport(
             success=successful_slices > 0,
@@ -1331,9 +1404,9 @@ class ExecutionEngine:
             successful_slices=successful_slices,
             failed_slices=failed_slices,
             execution_time_seconds=execution_time,
-            slice_reports=slice_reports
+            slice_reports=slice_reports,
         )
-        
+
         # 最终日志汇总
         logger.info(
             "\n========== 冰山订单完成 ==========\n"
@@ -1351,25 +1424,25 @@ class ExecutionEngine:
             avg_price,
             successful_slices,
             slice_count,
-            execution_time
+            execution_time,
         )
-        
+
         # 如果有大量失败，抛出异常交由上层处理
         if failed_slices > slice_count * 0.5:
             error_msg = f"冰山订单执行失败率过高：{failed_slices}/{slice_count} 切片失败"
             logger.error(error_msg)
             report.error_message = error_msg
             raise ExecutionError(error_msg)
-        
+
         return report
-    
+
     async def _fetch_orderbook_async(self, symbol: str) -> dict | None:
         """
         异步获取盘口数据
-        
+
         Args:
             symbol: 交易对
-        
+
         Returns:
             dict: {
                 'best_bid': float,
@@ -1383,35 +1456,35 @@ class ExecutionEngine:
             base_price = 50000.0
             spread = random.uniform(0.5, 2.0)
             return {
-                'best_bid': base_price - spread / 2,
-                'best_ask': base_price + spread / 2,
-                'bid_qty': random.uniform(10, 100),
-                'ask_qty': random.uniform(10, 100)
+                "best_bid": base_price - spread / 2,
+                "best_ask": base_price + spread / 2,
+                "bid_qty": random.uniform(10, 100),
+                "ask_qty": random.uniform(10, 100),
             }
-        
+
         try:
             # 同步调用转为异步（使用 asyncio.to_thread）
             response = await asyncio.to_thread(
                 self._request_with_retry,
                 "GET",
                 "/api/v3/depth",
-                params={'symbol': symbol, 'limit': 5},
-                require_auth=False
+                params={"symbol": symbol, "limit": 5},
+                require_auth=False,
             )
-            
-            if response and 'bids' in response and 'asks' in response:
+
+            if response and "bids" in response and "asks" in response:
                 return {
-                    'best_bid': float(response['bids'][0][0]),
-                    'best_ask': float(response['asks'][0][0]),
-                    'bid_qty': float(response['bids'][0][1]),
-                    'ask_qty': float(response['asks'][0][1])
+                    "best_bid": float(response["bids"][0][0]),
+                    "best_ask": float(response["asks"][0][0]),
+                    "bid_qty": float(response["bids"][0][1]),
+                    "ask_qty": float(response["asks"][0][1]),
                 }
             return None
-        
+
         except Exception as e:
             logger.error("获取盘口数据失败：%s", e)
             return None
-    
+
     async def _submit_maker_order_with_timeout(
         self,
         symbol: str,
@@ -1419,11 +1492,11 @@ class ExecutionEngine:
         quantity: float,
         price: float,
         slice_id: str,
-        timeout_seconds: int = 10
+        timeout_seconds: int = 10,
     ) -> dict:
         """
         提交 Maker 限价单并等待成交（超时撤单追价）
-        
+
         Args:
             symbol: 交易对
             side: 买卖方向
@@ -1431,7 +1504,7 @@ class ExecutionEngine:
             price: 委托价格
             slice_id: 切片 ID（用作幂等性键）
             timeout_seconds: 超时时间（秒）
-        
+
         Returns:
             dict: {
                 'success': bool,
@@ -1443,47 +1516,55 @@ class ExecutionEngine:
         """
         logger.info(
             "提交 Maker 限价单：side=%s, qty=%.2f, price=%.2f, timeout=%ds",
-            side, quantity, price, timeout_seconds
+            side,
+            quantity,
+            price,
+            timeout_seconds,
         )
-        
+
         if self.mode == "paper":
-            # Paper 模式：模拟执行
+            # Paper 模式：模拟执行（ATR 感知滑点模型）
             await asyncio.sleep(0.5)  # 模拟网络延迟
-            
-            # 模拟 90% 成交率
-            if random.random() < 0.9:
-                filled_qty = quantity * random.uniform(0.95, 1.0)
-                avg_price = price * random.uniform(0.9995, 1.0005)  # 微小滑点
-                
-                logger.info("Paper 成交：qty=%.2f, price=%.2f", filled_qty, avg_price)
-                
-                return {
-                    'success': True,
-                    'order_id': f"PAPER_{slice_id}",
-                    'filled_qty': filled_qty,
-                    'avg_price': avg_price,
-                    'reason': 'paper_filled'
-                }
+
+            # 与主执行引擎保持一致：5% 概率压力场景，其余为正常场景
+            is_stress = random.random() < 0.05
+            base_bps = self._paper_slippage_base_bps
+            stress_bps = self._paper_slippage_stress_bps
+
+            if is_stress:
+                slip_bps = random.uniform(stress_bps * 0.5, stress_bps)
+                fill_rate = random.uniform(0.80, 0.95)  # 压力场景下冲击成交率低
             else:
-                logger.info("Paper 超时未成交")
-                return {
-                    'success': False,
-                    'order_id': None,
-                    'filled_qty': 0,
-                    'avg_price': 0,
-                    'reason': 'paper_timeout'
-                }
-        
+                slip_bps = random.uniform(0, base_bps * 2)
+                fill_rate = random.uniform(0.97, 1.0)  # 正常场景高成交率
+
+            slip_direction = 1.0 if side.upper() == "BUY" else -1.0
+            avg_price = price * (1.0 + slip_direction * slip_bps / 10000.0)
+            filled_qty = quantity * fill_rate
+
+            logger.info(
+                "Paper 成交：qty=%.6f, price=%.4f | slip=%.2fbps | stress=%s",
+                filled_qty, avg_price, slip_bps, is_stress,
+            )
+
+            return {
+                "success": True,
+                "order_id": f"PAPER_{slice_id}",
+                "filled_qty": filled_qty,
+                "avg_price": avg_price,
+                "reason": f"paper_filled | slip={slip_bps:.2f}bps | stress={is_stress}",
+            }
+
         # 实盘/Testnet 模式
         if not self.api_key or not self.api_secret:
             return {
-                'success': False,
-                'order_id': None,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'reason': 'API credentials not configured'
+                "success": False,
+                "order_id": None,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "reason": "API credentials not configured",
             }
-        
+
         try:
             # 提交限价单
             params = {
@@ -1493,142 +1574,133 @@ class ExecutionEngine:
                 "quantity": quantity,
                 "price": price,
                 "timeInForce": "GTC",  # Good Till Cancel
-                "newClientOrderId": slice_id  # 幂等性订单 ID
+                "newClientOrderId": slice_id,  # 幂等性订单 ID
             }
-            
+
             signed_params = self._sign_request(params)
-            
+
             # 异步调用 API
             response = await asyncio.to_thread(
-                self._request_with_retry,
-                "POST",
-                "/api/v3/order",
-                signed_params
+                self._request_with_retry, "POST", "/api/v3/order", signed_params
             )
-            
+
             order_id = str(response.get("orderId", ""))
             order_status = response.get("status", "")
             filled_qty = float(response.get("executedQty", 0))
             avg_price = float(response.get("avgPrice", price))
-            
+
             logger.info(
                 "订单提交成功：order_id=%s, status=%s, filled=%.2f",
-                order_id, order_status, filled_qty
+                order_id,
+                order_status,
+                filled_qty,
             )
-            
+
             # 如果立即成交
             if order_status == "FILLED" or filled_qty > 0:
-                self._idempotency_cache[slice_id] = order_id
+                self._idempotency_cache[slice_id] = (order_id, time.time())
                 return {
-                    'success': True,
-                    'order_id': order_id,
-                    'filled_qty': filled_qty,
-                    'avg_price': avg_price,
-                    'reason': 'immediate_fill'
+                    "success": True,
+                    "order_id": order_id,
+                    "filled_qty": filled_qty,
+                    "avg_price": avg_price,
+                    "reason": "immediate_fill",
                 }
-            
+
             # 等待成交（轮询检查）
             logger.info("等待订单成交（超时 %d 秒）...", timeout_seconds)
             start_wait = time.time()
-            
+
             while time.time() - start_wait < timeout_seconds:
                 await asyncio.sleep(2)  # 每 2 秒检查一次
-                
+
                 # 查询订单状态
-                status_params = self._sign_request({
-                    'symbol': symbol,
-                    'orderId': order_id
-                })
-                
+                status_params = self._sign_request({"symbol": symbol, "orderId": order_id})
+
                 status_response = await asyncio.to_thread(
-                    self._request_with_retry,
-                    "GET",
-                    "/api/v3/order",
-                    status_params
+                    self._request_with_retry, "GET", "/api/v3/order", status_params
                 )
-                
+
                 current_status = status_response.get("status", "")
                 current_filled = float(status_response.get("executedQty", 0))
                 current_avg_price = float(status_response.get("avgPrice", price))
-                
+
                 logger.debug(
                     "订单状态检查：status=%s, filled=%.2f, avg_price=%.2f",
-                    current_status, current_filled, current_avg_price
+                    current_status,
+                    current_filled,
+                    current_avg_price,
                 )
-                
+
                 # 如果成交了
                 if current_status == "FILLED" or current_filled > 0:
-                    self._idempotency_cache[slice_id] = order_id
-                    logger.info("订单成交：filled=%.2f, avg_price=%.2f", current_filled, current_avg_price)
+                    self._idempotency_cache[slice_id] = (order_id, time.time())
+                    logger.info(
+                        "订单成交：filled=%.2f, avg_price=%.2f", current_filled, current_avg_price
+                    )
                     return {
-                        'success': True,
-                        'order_id': order_id,
-                        'filled_qty': current_filled,
-                        'avg_price': current_avg_price,
-                        'reason': 'filled_after_wait'
+                        "success": True,
+                        "order_id": order_id,
+                        "filled_qty": current_filled,
+                        "avg_price": current_avg_price,
+                        "reason": "filled_after_wait",
                     }
-                
+
                 # 如果订单被取消
                 if current_status == "CANCELED":
                     return {
-                        'success': False,
-                        'order_id': order_id,
-                        'filled_qty': 0,
-                        'avg_price': 0,
-                        'reason': 'order_canceled'
+                        "success": False,
+                        "order_id": order_id,
+                        "filled_qty": 0,
+                        "avg_price": 0,
+                        "reason": "order_canceled",
                     }
-            
+
             # 超时未成交，撤单
             logger.info("订单超时 %d 秒未成交，执行撤单", timeout_seconds)
-            
-            cancel_params = self._sign_request({
-                'symbol': symbol,
-                'orderId': order_id
-            })
-            
+
+            cancel_params = self._sign_request({"symbol": symbol, "orderId": order_id})
+
             await asyncio.to_thread(
-                self._request_with_retry,
-                "DELETE",
-                "/api/v3/order",
-                cancel_params
+                self._request_with_retry, "DELETE", "/api/v3/order", cancel_params
             )
-            
+
             logger.info("撤单成功，等待下一次循环追价")
-            
+
             return {
-                'success': False,
-                'order_id': order_id,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'reason': f'timeout_{timeout_seconds}s'
+                "success": False,
+                "order_id": order_id,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "reason": f"timeout_{timeout_seconds}s",
             }
-        
+
         except APIError as e:
             logger.error("API 错误：%s", e)
             return {
-                'success': False,
-                'order_id': None,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'reason': f'APIError: {e}'
+                "success": False,
+                "order_id": None,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "reason": f"APIError: {e}",
             }
-        
+
         except NetworkError as e:
             logger.error("网络错误：%s", e)
             return {
-                'success': False,
-                'order_id': None,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'reason': f'NetworkError: {e}'
+                "success": False,
+                "order_id": None,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "reason": f"NetworkError: {e}",
             }
-        
+
         except Exception as e:
             logger.error("未知错误：%s", e)
             return {
-                'success': False,
-                'order_id': None,
-                'filled_qty': 0,
-                'avg_price': 0,
-                'reason': f'Exception: {e}'
+                "success": False,
+                "order_id": None,
+                "filled_qty": 0,
+                "avg_price": 0,
+                "reason": f"Exception: {e}",
             }

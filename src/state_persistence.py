@@ -10,10 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from contextlib import contextmanager
-from dataclasses import asdict
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 class StatePersistence:
     """
     SQLite 数据持久化管理器
-    
+
     功能：
     1. 自动创建和迁移数据库架构
     2. 支持事务性操作
@@ -134,23 +133,23 @@ class StatePersistence:
 
             # 创建索引以加快查询
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol 
+                CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol
                 ON closed_positions(symbol)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_closed_positions_closed_at 
+                CREATE INDEX IF NOT EXISTS idx_closed_positions_closed_at
                 ON closed_positions(closed_at)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_signal_logs_symbol 
+                CREATE INDEX IF NOT EXISTS idx_signal_logs_symbol
                 ON signal_logs(symbol)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_signal_logs_timestamp 
+                CREATE INDEX IF NOT EXISTS idx_signal_logs_timestamp
                 ON signal_logs(timestamp)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_risk_events_timestamp 
+                CREATE INDEX IF NOT EXISTS idx_risk_events_timestamp
                 ON risk_events(timestamp)
             """)
 
@@ -160,35 +159,38 @@ class StatePersistence:
     def add_closed_position(self, position: dict) -> bool:
         """
         添加已平仓头寸
-        
+
         Args:
-            position: 头寸字典，包含 symbol, side, entry_price, exit_price, size_usdt, 
+            position: 头寸字典，包含 symbol, side, entry_price, exit_price, size_usdt,
                      entry_at, closed_at, realized_pnl_usdt, realized_pnl_pct, exit_reason, signal_grade
-        
+
         Returns:
             是否成功添加
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR IGNORE INTO closed_positions 
-                    (symbol, side, entry_price, exit_price, size_usdt, entry_at, closed_at, 
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO closed_positions
+                    (symbol, side, entry_price, exit_price, size_usdt, entry_at, closed_at,
                      realized_pnl_usdt, realized_pnl_pct, exit_reason, signal_grade)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    position.get("symbol"),
-                    position.get("side"),
-                    float(position.get("entry_price", 0)),
-                    float(position.get("exit_price", 0)),
-                    float(position.get("size_usdt", 0)),
-                    position.get("entry_at"),
-                    position.get("closed_at"),
-                    float(position.get("realized_pnl_usdt", 0)),
-                    float(position.get("realized_pnl_pct", 0)),
-                    position.get("exit_reason"),
-                    position.get("signal_grade"),
-                ))
+                """,
+                    (
+                        position.get("symbol"),
+                        position.get("side"),
+                        float(position.get("entry_price", 0)),
+                        float(position.get("exit_price", 0)),
+                        float(position.get("size_usdt", 0)),
+                        position.get("entry_at"),
+                        position.get("closed_at"),
+                        float(position.get("realized_pnl_usdt", 0)),
+                        float(position.get("realized_pnl_pct", 0)),
+                        position.get("exit_reason"),
+                        position.get("signal_grade"),
+                    ),
+                )
                 conn.commit()
                 return cursor.rowcount > 0
         except Exception as e:
@@ -198,23 +200,26 @@ class StatePersistence:
     def update_open_position(self, symbol: str, current_price: float, peak_pnl_pct: float) -> bool:
         """
         更新开放头寸的当前价格和峰值 PnL
-        
+
         Args:
             symbol: 交易标的
             current_price: 当前价格
             peak_pnl_pct: 峰值 PnL 百分比
-        
+
         Returns:
             是否成功更新
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE open_positions 
+                cursor.execute(
+                    """
+                    UPDATE open_positions
                     SET peak_pnl_pct = MAX(peak_pnl_pct, ?), updated_at = CURRENT_TIMESTAMP
                     WHERE symbol = ?
-                """, (peak_pnl_pct, symbol))
+                """,
+                    (peak_pnl_pct, symbol),
+                )
                 conn.commit()
                 return cursor.rowcount > 0
         except Exception as e:
@@ -224,34 +229,37 @@ class StatePersistence:
     def add_signal_log(self, signal_log: dict) -> bool:
         """
         记录交易信号
-        
+
         Args:
-            signal_log: 信号字典，包含 symbol, timestamp, market_state, signal_grade, 
+            signal_log: 信号字典，包含 symbol, timestamp, market_state, signal_grade,
                        signal_side, score, reason, blocked_reason, snapshot_json, metrics_json
-        
+
         Returns:
             是否成功添加
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO signal_logs 
-                    (symbol, timestamp, market_state, signal_grade, signal_side, score, 
+                cursor.execute(
+                    """
+                    INSERT INTO signal_logs
+                    (symbol, timestamp, market_state, signal_grade, signal_side, score,
                      reason, blocked_reason, snapshot_json, metrics_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    signal_log.get("symbol"),
-                    signal_log.get("timestamp"),
-                    signal_log.get("market_state"),
-                    signal_log.get("signal_grade"),
-                    signal_log.get("signal_side"),
-                    int(signal_log.get("score", 0)),
-                    signal_log.get("reason"),
-                    signal_log.get("blocked_reason"),
-                    json.dumps(signal_log.get("snapshot", {})),
-                    json.dumps(signal_log.get("metrics", {})),
-                ))
+                """,
+                    (
+                        signal_log.get("symbol"),
+                        signal_log.get("timestamp"),
+                        signal_log.get("market_state"),
+                        signal_log.get("signal_grade"),
+                        signal_log.get("signal_side"),
+                        int(signal_log.get("score", 0)),
+                        signal_log.get("reason"),
+                        signal_log.get("blocked_reason"),
+                        json.dumps(signal_log.get("snapshot", {})),
+                        json.dumps(signal_log.get("metrics", {})),
+                    ),
+                )
                 conn.commit()
                 return True
         except Exception as e:
@@ -261,28 +269,31 @@ class StatePersistence:
     def add_risk_event(self, event_type: str, symbol: str | None, details: dict) -> bool:
         """
         记录风控事件
-        
+
         Args:
             event_type: 事件类型（如 'daily_stop_loss', 'consecutive_loss_pause'）
             symbol: 交易标的（可选）
             details: 事件详情字典
-        
+
         Returns:
             是否成功添加
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO risk_events 
+                cursor.execute(
+                    """
+                    INSERT INTO risk_events
                     (event_type, symbol, timestamp, details_json)
                     VALUES (?, ?, ?, ?)
-                """, (
-                    event_type,
-                    symbol,
-                    datetime.now(UTC).isoformat(),
-                    json.dumps(details),
-                ))
+                """,
+                    (
+                        event_type,
+                        symbol,
+                        datetime.now(UTC).isoformat(),
+                        json.dumps(details),
+                    ),
+                )
                 conn.commit()
                 return True
         except Exception as e:
@@ -292,23 +303,26 @@ class StatePersistence:
     def get_closed_positions_by_symbol(self, symbol: str, limit: int = 100) -> list[dict]:
         """
         查询特定标的的已平仓头寸
-        
+
         Args:
             symbol: 交易标的
             limit: 返回记录数限制
-        
+
         Returns:
             头寸列表
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM closed_positions 
-                    WHERE symbol = ? 
-                    ORDER BY closed_at DESC 
+                cursor.execute(
+                    """
+                    SELECT * FROM closed_positions
+                    WHERE symbol = ?
+                    ORDER BY closed_at DESC
                     LIMIT ?
-                """, (symbol, limit))
+                """,
+                    (symbol, limit),
+                )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to query closed positions for {symbol}: {e}")
@@ -317,20 +331,23 @@ class StatePersistence:
     def get_today_performance(self, date: str) -> dict | None:
         """
         查询特定日期的性能统计
-        
+
         Args:
             date: 日期字符串 (YYYY-MM-DD)
-        
+
         Returns:
             性能统计字典或 None
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM daily_performance 
+                cursor.execute(
+                    """
+                    SELECT * FROM daily_performance
                     WHERE date = ?
-                """, (date,))
+                """,
+                    (date,),
+                )
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
@@ -340,19 +357,20 @@ class StatePersistence:
     def upsert_daily_performance(self, date: str, performance: dict) -> bool:
         """
         更新或插入每日性能统计
-        
+
         Args:
             date: 日期字符串 (YYYY-MM-DD)
             performance: 性能统计字典
-        
+
         Returns:
             是否成功
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO daily_performance 
+                cursor.execute(
+                    """
+                    INSERT INTO daily_performance
                     (date, closed_trades, wins, losses, win_rate_pct, total_pnl_usdt, avg_pnl_pct, daily_stop_hit)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(date) DO UPDATE SET
@@ -364,16 +382,18 @@ class StatePersistence:
                         avg_pnl_pct = excluded.avg_pnl_pct,
                         daily_stop_hit = excluded.daily_stop_hit,
                         updated_at = CURRENT_TIMESTAMP
-                """, (
-                    date,
-                    int(performance.get("closed_trades", 0)),
-                    int(performance.get("wins", 0)),
-                    int(performance.get("losses", 0)),
-                    float(performance.get("win_rate_pct", 0)),
-                    float(performance.get("total_pnl_usdt", 0)),
-                    float(performance.get("avg_pnl_pct", 0)),
-                    int(performance.get("daily_stop_hit", False)),
-                ))
+                """,
+                    (
+                        date,
+                        int(performance.get("closed_trades", 0)),
+                        int(performance.get("wins", 0)),
+                        int(performance.get("losses", 0)),
+                        float(performance.get("win_rate_pct", 0)),
+                        float(performance.get("total_pnl_usdt", 0)),
+                        float(performance.get("avg_pnl_pct", 0)),
+                        int(performance.get("daily_stop_hit", False)),
+                    ),
+                )
                 conn.commit()
                 return True
         except Exception as e:
@@ -383,20 +403,21 @@ class StatePersistence:
     def get_statistics(self, days: int = 30) -> dict:
         """
         获取最近 N 天的统计数据
-        
+
         Args:
             days: 天数
-        
+
         Returns:
             统计字典
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 # 总体统计
-                cursor.execute("""
-                    SELECT 
+                cursor.execute(
+                    """
+                    SELECT
                         COUNT(*) as total_closed,
                         SUM(CASE WHEN realized_pnl_usdt > 0 THEN 1 ELSE 0 END) as total_wins,
                         SUM(CASE WHEN realized_pnl_usdt < 0 THEN 1 ELSE 0 END) as total_losses,
@@ -404,12 +425,15 @@ class StatePersistence:
                         SUM(realized_pnl_usdt) as total_pnl_usdt
                     FROM closed_positions
                     WHERE closed_at >= datetime('now', '-' || ? || ' days')
-                """, (days,))
+                """,
+                    (days,),
+                )
                 stats = dict(cursor.fetchone())
-                
+
                 # 按标的统计
-                cursor.execute("""
-                    SELECT 
+                cursor.execute(
+                    """
+                    SELECT
                         symbol,
                         COUNT(*) as count,
                         SUM(CASE WHEN realized_pnl_usdt > 0 THEN 1 ELSE 0 END) as wins,
@@ -419,9 +443,11 @@ class StatePersistence:
                     WHERE closed_at >= datetime('now', '-' || ? || ' days')
                     GROUP BY symbol
                     ORDER BY total_pnl_usdt DESC
-                """, (days,))
+                """,
+                    (days,),
+                )
                 symbol_stats = [dict(row) for row in cursor.fetchall()]
-                
+
                 return {
                     "period_days": days,
                     "overall": stats,
@@ -434,31 +460,37 @@ class StatePersistence:
     def cleanup_old_logs(self, days_to_keep: int = 90) -> int:
         """
         清理旧的日志数据
-        
+
         Args:
             days_to_keep: 保留天数
-        
+
         Returns:
             删除的记录数
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 # 清理旧的信号日志
-                cursor.execute("""
-                    DELETE FROM signal_logs 
+                cursor.execute(
+                    """
+                    DELETE FROM signal_logs
                     WHERE created_at < datetime('now', '-' || ? || ' days')
-                """, (days_to_keep,))
+                """,
+                    (days_to_keep,),
+                )
                 signal_deleted = cursor.rowcount
-                
+
                 # 清理旧的风控事件
-                cursor.execute("""
-                    DELETE FROM risk_events 
+                cursor.execute(
+                    """
+                    DELETE FROM risk_events
                     WHERE created_at < datetime('now', '-' || ? || ' days')
-                """, (days_to_keep,))
+                """,
+                    (days_to_keep,),
+                )
                 risk_deleted = cursor.rowcount
-                
+
                 conn.commit()
                 total_deleted = signal_deleted + risk_deleted
                 logger.info(f"Cleaned up {total_deleted} old log records")

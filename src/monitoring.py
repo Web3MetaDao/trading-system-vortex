@@ -11,6 +11,7 @@ from typing import Any
 
 try:
     from telegram_notifier import TelegramAlertLevel, TelegramNotifier
+
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -550,7 +551,9 @@ class MonitoringDashboard:
         if self.telegram_enabled and self.telegram:
             self.telegram.send_signal_alert(symbol, grade, score, "S1")
 
-    def log_risk_decision(self, symbol: str, approved: bool, reason: str | None = None, size_usdt: float = 0.0):
+    def log_risk_decision(
+        self, symbol: str, approved: bool, reason: str | None = None, size_usdt: float = 0.0
+    ):
         self.logger.info(
             f"Risk decision: {'APPROVED' if approved else 'REJECTED'}",
             {"symbol": symbol, "approved": approved, "reason": reason},

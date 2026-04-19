@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from decimal import Decimal, ROUND_HALF_UP
 
 from dotenv import load_dotenv
 
 from config_loader import load_yaml
 from data_provider import UnifiedDataProvider
 from execution_engine import ExecutionEngine
-from healthcheck import build_paper_backtest_compare, load_latest_backtest, write_health_report
+from healthcheck import write_health_report
 from journal import Journal
 from market_data import MarketDataClient
 from portfolio_manager import PortfolioManager
@@ -21,8 +21,7 @@ from state_engine import StateEngine
 
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -32,11 +31,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def _round_decimal(value: float, decimals: int = 4) -> float:
     """
     使用 Decimal 进行精确的浮点数舍入，避免浮点数精度问题。
-    
+
     Args:
         value: 要舍入的浮点数
         decimals: 保留的小数位数
-    
+
     Returns:
         舍入后的浮点数
     """
@@ -44,7 +43,7 @@ def _round_decimal(value: float, decimals: int = 4) -> float:
         return 0.0
     try:
         d = Decimal(str(value))
-        quantize_str = '0.' + '0' * decimals if decimals > 0 else '1'
+        quantize_str = "0." + "0" * decimals if decimals > 0 else "1"
         quantized = d.quantize(Decimal(quantize_str), rounding=ROUND_HALF_UP)
         return float(quantized)
     except Exception as e:
@@ -127,7 +126,7 @@ def _format_brief_summary(summary: dict) -> str:
 def run_cycle() -> dict:
     """
     执行一个完整的交易周期，包含全局异常处理和精度管理。
-    
+
     Returns:
         包含周期执行结果的字典
     """
@@ -334,7 +333,9 @@ def run_cycle() -> dict:
                     journal.log("exit", event)
                     print(f"[{symbol}] exit -> {result.detail}")
             except Exception as e:
-                logger.error(f"Position monitoring failed for {position.get('symbol')}: {e}", exc_info=True)
+                logger.error(
+                    f"Position monitoring failed for {position.get('symbol')}: {e}", exc_info=True
+                )
                 error = {
                     "stage": "position_monitor",
                     "symbol": position.get("symbol", "UNKNOWN"),
@@ -349,7 +350,11 @@ def run_cycle() -> dict:
             try:
                 snapshot = context.signal_snapshots.get(str(symbol).upper())
                 if snapshot is None:
-                    error = {"stage": "symbol_fetch", "symbol": symbol, "error": "missing_context_snapshot"}
+                    error = {
+                        "stage": "symbol_fetch",
+                        "symbol": symbol,
+                        "error": "missing_context_snapshot",
+                    }
                     summary["errors"].append(error)
                     journal.log("cycle_error", error)
                     print(f"[{symbol}] fetch degraded -> missing_context_snapshot")
@@ -474,7 +479,9 @@ def run_cycle() -> dict:
                 else:
                     event = {
                         "symbol": symbol,
-                        "reason": size_decision.reason if not size_decision.approved else "no buy signal",
+                        "reason": size_decision.reason
+                        if not size_decision.approved
+                        else "no buy signal",
                     }
                     summary["blocked"].append(event)
                     journal.log("entry_blocked", event)

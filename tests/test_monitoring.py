@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from monitoring import (
+from monitoring import (  # noqa: E402
     Alert,
     AlertEngine,
     AlertRule,

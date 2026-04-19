@@ -94,7 +94,7 @@ class MarketDataClient:
             except Exception as exc:
                 raise MarketDataError(
                     f"ticker_24hr_failed: {ticker_24h_error}; ticker_price_failed: {exc}"
-                )
+                ) from exc
 
         return MarketSnapshot(
             symbol=symbol,

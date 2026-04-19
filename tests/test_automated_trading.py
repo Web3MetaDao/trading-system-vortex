@@ -2,24 +2,24 @@ import asyncio
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from automated_trading import (
+from automated_trading import (  # noqa: E402
     AutomatedTradingLoop,
     AutomatedTradingLoopConfig,
     AutoSymbolRotator,
+    LoopMetrics,
+    LoopState,
     PositionMonitor,
     PositionMonitorConfig,
     SchedulerConfig,
-    TradingScheduler,
     SymbolConfig,
-    LoopState,
-    LoopMetrics,
+    TradingScheduler,
 )
 
 

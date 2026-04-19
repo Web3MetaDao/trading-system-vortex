@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from collections import defaultdict
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -113,15 +113,17 @@ class RiskEngine:
             )
         return RiskDecision(True, requested_size_usdt, "Portfolio filters passed")
 
-    def trade_gate(self, portfolio, symbol: str | None = None, now_utc: datetime | None = None) -> RiskDecision:
+    def trade_gate(
+        self, portfolio, symbol: str | None = None, now_utc: datetime | None = None
+    ) -> RiskDecision:
         """
         全局交易开关，支持按标的的精细化风控。
-        
+
         Args:
             portfolio: 投资组合对象
             symbol: 交易标的，用于按标的统计连亏
             now_utc: 当前 UTC 时间
-        
+
         Returns:
             RiskDecision 对象
         """
@@ -147,7 +149,7 @@ class RiskEngine:
                 loss_streak = self._consecutive_loss_streak_by_symbol(closed_positions, symbol)
             else:
                 loss_streak = self._consecutive_loss_streak(closed_positions)
-            
+
             if loss_streak >= consecutive_loss_pause:
                 streak_type = f"for {symbol}" if symbol else "overall"
                 return RiskDecision(
@@ -186,7 +188,7 @@ class RiskEngine:
     def exit_reason(self, position: dict, snapshot, market_state: str) -> str | None:
         """
         判断是否应该平仓，包含优化的 EMA 退出逻辑。
-        
+
         优化内容：
         1. EMA 退出增加缓冲阈值，防止 Whipsaw
         2. 支持结合其他指标确认趋势反转
@@ -213,8 +215,10 @@ class RiskEngine:
         if pnl_pct > peak_pnl_pct:
             position["peak_pnl_pct"] = pnl_pct
 
-        trailing_stop_pct = 1.5
-        if peak_pnl_pct >= 2.0 and pnl_pct <= peak_pnl_pct - trailing_stop_pct:
+        # [FIX] 从配置读取，消除硬编码
+        trailing_stop_pct = float(self.config.get("trailing_stop_pct", 1.5))
+        trailing_stop_activation_pct = float(self.config.get("trailing_stop_activation_pct", 2.0))
+        if peak_pnl_pct >= trailing_stop_activation_pct and pnl_pct <= peak_pnl_pct - trailing_stop_pct:
             return f"trailing_stop ({pnl_pct:.2f}%)"
 
         if market_state == "S5":
@@ -292,11 +296,11 @@ class RiskEngine:
     def _consecutive_loss_streak_by_symbol(self, closed_positions: list[dict], symbol: str) -> int:
         """
         按标的统计连亏次数，用于精细化风控。
-        
+
         Args:
             closed_positions: 已平仓头寸列表
             symbol: 交易标的
-        
+
         Returns:
             该标的的连续亏损次数
         """

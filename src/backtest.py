@@ -179,7 +179,9 @@ def build_analysis(trades: list[dict], blocked: list[dict] | None = None) -> dic
     by_blocked_market_state: dict[str, list[dict]] = defaultdict(list)
 
     for item in blocked:
-        by_blocked_reason[str(item.get("blocked_reason") or item.get("reason") or "UNKNOWN")].append(item)
+        by_blocked_reason[
+            str(item.get("blocked_reason") or item.get("reason") or "UNKNOWN")
+        ].append(item)
         by_blocked_setup[str(item.get("setup", "none"))].append(item)
         by_blocked_grade[str(item.get("grade", "UNKNOWN"))].append(item)
         by_blocked_market_state[str(item.get("market_state", "UNKNOWN"))].append(item)
@@ -205,7 +207,8 @@ def build_analysis(trades: list[dict], blocked: list[dict] | None = None) -> dic
                 k: summarize_records(v, ["score"]) for k, v in sorted(by_blocked_grade.items())
             },
             "by_market_state": {
-                k: summarize_records(v, ["score"]) for k, v in sorted(by_blocked_market_state.items())
+                k: summarize_records(v, ["score"])
+                for k, v in sorted(by_blocked_market_state.items())
             },
         },
     }
@@ -498,7 +501,9 @@ def run_backtest(
                     {
                         "symbol": current_symbol,
                         "reason": signal.reason,
-                        "blocked_reason": signal.explain.get("blocked_reason") if isinstance(signal.explain, dict) else None,
+                        "blocked_reason": signal.explain.get("blocked_reason")
+                        if isinstance(signal.explain, dict)
+                        else None,
                         "score": signal.score,
                         "grade": signal.grade,
                         "setup": signal.setup,

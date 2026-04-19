@@ -17,6 +17,7 @@ class SignalSenderImportTests(unittest.TestCase):
     def test_import_signal_sender(self):
         try:
             from signal_sender import SignalSender
+
             self.assertTrue(True)
         except ImportError as e:
             self.fail(f"Failed to import SignalSender: {e}")

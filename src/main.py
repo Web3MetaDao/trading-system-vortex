@@ -293,6 +293,8 @@ def run_cycle() -> dict:
                 "intermarket": context.intermarket,
                 "derivatives": context.derivatives.get(str(symbol).upper(), {}),
                 "data_health": context.data_health,
+                # [FIX] 将 oracle_snapshot 注入信号引擎，启用宏观情绪过滤
+                "oracle_snapshot": context.oracle_snapshot,
             },
         )
         size_decision = risk_engine.size_position(signal.grade)

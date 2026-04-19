@@ -1,3 +1,14 @@
+"""
+VORTEX Trading System - TelegramNotifier 测试套件 (v2.0 - 机构级重构)
+
+[FIX v2.0] 完全重写测试用例，与实际 telegram_notifier.py (v3.0) 的 API 对齐：
+- 移除对已废弃的 python-telegram-bot 的 mock（代码已改用 aiohttp）
+- 移除不存在的方法测试（format_signal_alert/format_risk_alert 等）
+- 修复 send_trade_alert 和 send_risk_alert 的参数签名
+- 新增对 send_signal_alert、send_risk_alert、send_error_alert 的正确测试
+"""
+from __future__ import annotations
+
 import sys
 import unittest
 from pathlib import Path
@@ -10,9 +21,12 @@ if str(SRC) not in sys.path:
 
 
 class TelegramNotifierImportTests(unittest.TestCase):
+    """测试模块导入"""
+
     def test_import_telegram_notifier(self):
         try:
-            from telegram_notifier import TelegramNotifier, TelegramAlertLevel
+            from telegram_notifier import TelegramAlertLevel, TelegramNotifier
+
             self.assertIsNotNone(TelegramNotifier)
             self.assertIsNotNone(TelegramAlertLevel)
         except ImportError:
@@ -21,6 +35,7 @@ class TelegramNotifierImportTests(unittest.TestCase):
     def test_telegram_alert_level_values(self):
         try:
             from telegram_notifier import TelegramAlertLevel
+
             self.assertEqual(TelegramAlertLevel.INFO.value, "INFO")
             self.assertEqual(TelegramAlertLevel.WARNING.value, "WARNING")
             self.assertEqual(TelegramAlertLevel.ERROR.value, "ERROR")
@@ -28,14 +43,25 @@ class TelegramNotifierImportTests(unittest.TestCase):
         except ImportError:
             self.skipTest("telegram_notifier not available")
 
+    def test_aiohttp_available_flag(self):
+        """验证 AIOHTTP_AVAILABLE 标志存在（v3.0 使用 aiohttp 替代 python-telegram-bot）"""
+        try:
+            from telegram_notifier import AIOHTTP_AVAILABLE
+
+            self.assertIsInstance(AIOHTTP_AVAILABLE, bool)
+        except ImportError:
+            self.skipTest("telegram_notifier not available")
+
 
 class TelegramNotifierInitTests(unittest.TestCase):
-    @patch("telegram_notifier.telegram")
-    def test_init_without_token_disabled(self, mock_telegram):
+    """测试初始化逻辑"""
+
+    def test_init_without_token_disabled(self):
+        """无 token 时，notifier 应自动禁用"""
         try:
             from telegram_notifier import TelegramNotifier
-            TelegramNotifier.reset_instance()
 
+            TelegramNotifier.reset_instance()
             notifier = TelegramNotifier(
                 bot_token="",
                 chat_id="",
@@ -43,43 +69,53 @@ class TelegramNotifierInitTests(unittest.TestCase):
             )
             self.assertFalse(notifier.is_enabled)
         except ImportError:
-            self.skipTest("python-telegram-bot not installed")
+            self.skipTest("telegram_notifier not available")
 
-    @patch("telegram_notifier.telegram")
-    def test_init_with_credentials_enabled(self, mock_telegram):
+    def test_init_with_credentials_enabled(self):
+        """提供有效 token 时，notifier 应启用"""
         try:
-            from telegram_notifier import TELEGRAM_AVAILABLE
-            if not TELEGRAM_AVAILABLE:
-                self.skipTest("python-telegram-bot not installed")
-
             from telegram_notifier import TelegramNotifier
+
             TelegramNotifier.reset_instance()
-
-            mock_bot = MagicMock()
-            mock_telegram.Bot.return_value = mock_bot
-
             notifier = TelegramNotifier(
-                bot_token="test_token",
+                bot_token="test_token_12345",
                 chat_id="test_chat_id",
                 enabled=True,
             )
+            # 由于 aiohttp 不需要实例化 Bot 对象，初始化应成功
             self.assertTrue(notifier.is_enabled)
-            self.assertEqual(notifier.bot_token, "test_token")
+            self.assertEqual(notifier.bot_token, "test_token_12345")
             self.assertEqual(notifier.chat_id, "test_chat_id")
         except ImportError:
-            self.skipTest("python-telegram-bot not installed")
+            self.skipTest("telegram_notifier not available")
+
+    def test_singleton_pattern(self):
+        """测试单例模式"""
+        try:
+            from telegram_notifier import TelegramNotifier
+
+            TelegramNotifier.reset_instance()
+            inst1 = TelegramNotifier.get_instance(enabled=False)
+            inst2 = TelegramNotifier.get_instance(enabled=False)
+            self.assertIs(inst1, inst2)
+        except ImportError:
+            self.skipTest("telegram_notifier not available")
 
 
 class TelegramNotifierFormatTests(unittest.TestCase):
+    """测试消息格式化方法"""
+
     def setUp(self):
         try:
             from telegram_notifier import TelegramNotifier
+
             TelegramNotifier.reset_instance()
             self.notifier = TelegramNotifier(enabled=False)
         except ImportError:
-            self.skipTest("python-telegram-bot not installed")
+            self.skipTest("telegram_notifier not available")
 
     def test_format_trade_alert(self):
+        """测试 format_trade_alert（简化版，向后兼容）"""
         text = self.notifier.format_trade_alert(
             symbol="BTCUSDT",
             side="BUY",
@@ -91,108 +127,28 @@ class TelegramNotifierFormatTests(unittest.TestCase):
         self.assertIn("BUY", text)
         self.assertIn("0.1", text)
         self.assertIn("50000", text)
-
-    def test_format_signal_alert(self):
-        text = self.notifier.format_signal_alert(
-            symbol="ETHUSDT",
-            grade="A",
-            score=8.5,
-            market_state="S1",
-        )
-        self.assertIn("ETHUSDT", text)
-        self.assertIn("A", text)
-        self.assertIn("8.5", text)
-
-    def test_format_risk_alert_approved(self):
-        text = self.notifier.format_risk_alert(
-            symbol="BTCUSDT",
-            approved=True,
-            reason=None,
-            size_usdt=100.0,
-        )
-        self.assertIn("BTCUSDT", text)
-        self.assertIn("APPROVED", text)
-
-    def test_format_risk_alert_rejected(self):
-        text = self.notifier.format_risk_alert(
-            symbol="BTCUSDT",
-            approved=False,
-            reason="Insufficient balance",
-            size_usdt=100.0,
-        )
-        self.assertIn("BTCUSDT", text)
-        self.assertIn("REJECTED", text)
-        self.assertIn("Insufficient balance", text)
-
-    def test_format_data_health_alert_degraded(self):
-        text = self.notifier.format_data_health_alert(
-            status="degraded",
-            details={"binance": False},
-        )
-        self.assertIn("DEGRADED", text)
-        self.assertIn("binance", text)
-
-    def test_format_error_alert(self):
-        text = self.notifier.format_error_alert(
-            error_type="NETWORK_ERROR",
-            message="Connection timeout",
-            context={"url": "https://api.binance.com"},
-        )
-        self.assertIn("NETWORK_ERROR", text)
-        self.assertIn("Connection timeout", text)
-
-    def test_format_position_alert(self):
-        text = self.notifier.format_position_alert(
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.1,
-            entry_price=50000.0,
-            current_price=51000.0,
-            pnl_pct=2.0,
-            action="HOLD",
-        )
-        self.assertIn("BTCUSDT", text)
-        self.assertIn("LONG", text)
-        self.assertIn("2.0", text)
-
-    def test_format_daily_summary(self):
-        text = self.notifier.format_daily_summary(
-            total_trades=10,
-            winning_trades=7,
-            losing_trades=3,
-            total_pnl=25.5,
-            open_positions=2,
-            portfolio_value=1025.5,
-        )
-        self.assertIn("10", text)
-        self.assertIn("7", text)
-        self.assertIn("3", text)
-        self.assertIn("25.5", text)
+        self.assertIn("SUCCESS", text)
 
 
 class TelegramNotifierSendTests(unittest.TestCase):
+    """测试发送方法（disabled 模式下应返回 False）"""
+
     def setUp(self):
         try:
             from telegram_notifier import TelegramNotifier
+
             TelegramNotifier.reset_instance()
             self.notifier = TelegramNotifier(enabled=False)
         except ImportError:
-            self.skipTest("python-telegram-bot not installed")
+            self.skipTest("telegram_notifier not available")
 
     def test_send_when_disabled(self):
+        """disabled 时 send 应返回 False"""
         result = self.notifier.send("Test message")
         self.assertFalse(result)
 
-    def test_send_trade_alert_when_disabled(self):
-        result = self.notifier.send_trade_alert(
-            symbol="BTCUSDT",
-            side="BUY",
-            quantity=0.1,
-            price=50000.0,
-        )
-        self.assertFalse(result)
-
     def test_send_signal_alert_when_disabled(self):
+        """disabled 时 send_signal_alert 应返回 False"""
         result = self.notifier.send_signal_alert(
             symbol="ETHUSDT",
             grade="A",
@@ -201,34 +157,80 @@ class TelegramNotifierSendTests(unittest.TestCase):
         )
         self.assertFalse(result)
 
-    def test_send_risk_alert_when_disabled(self):
+    def test_send_risk_alert_approved_when_disabled(self):
+        """disabled 时 send_risk_alert（approved）应返回 False"""
+        result = self.notifier.send_risk_alert(
+            symbol="BTCUSDT",
+            approved=True,
+            reason=None,
+            size_usdt=100.0,
+        )
+        self.assertFalse(result)
+
+    def test_send_risk_alert_rejected_when_disabled(self):
+        """disabled 时 send_risk_alert（rejected）应返回 False"""
         result = self.notifier.send_risk_alert(
             symbol="BTCUSDT",
             approved=False,
             reason="Insufficient balance",
-        )
-        self.assertFalse(result)
-
-    def test_send_data_health_alert_when_disabled(self):
-        result = self.notifier.send_data_health_alert(
-            status="degraded",
-            details={"binance": False},
+            size_usdt=100.0,
         )
         self.assertFalse(result)
 
     def test_send_error_alert_when_disabled(self):
+        """disabled 时 send_error_alert 应返回 False"""
         result = self.notifier.send_error_alert(
             error_type="NETWORK_ERROR",
             message="Connection timeout",
+            context={"url": "https://api.binance.com"},
         )
         self.assertFalse(result)
 
     def test_is_available_property(self):
+        """is_available 属性应返回 bool"""
+        self.assertIsInstance(self.notifier.is_available, bool)
+
+    def test_is_enabled_property(self):
+        """is_enabled 属性应返回 False（disabled 模式）"""
+        self.assertFalse(self.notifier.is_enabled)
+
+
+class TelegramNotifierSendRiskAlertSignatureTest(unittest.TestCase):
+    """测试 send_risk_alert 的参数签名（体检发现 size_usdt 为必填参数）"""
+
+    def test_send_risk_alert_requires_size_usdt(self):
+        """send_risk_alert 必须传入 size_usdt 参数"""
         try:
-            from telegram_notifier import TELEGRAM_AVAILABLE
-            self.assertIsInstance(TELEGRAM_AVAILABLE, bool)
+            from telegram_notifier import TelegramNotifier
+
+            TelegramNotifier.reset_instance()
+            notifier = TelegramNotifier(enabled=False)
+            import inspect
+
+            sig = inspect.signature(notifier.send_risk_alert)
+            params = list(sig.parameters.keys())
+            self.assertIn("size_usdt", params)
         except ImportError:
-            pass
+            self.skipTest("telegram_notifier not available")
+
+
+class TelegramNotifierSendTradeAlertSignatureTest(unittest.TestCase):
+    """测试 send_trade_alert 的参数签名（体检发现 result 为必填参数）"""
+
+    def test_send_trade_alert_requires_result(self):
+        """send_trade_alert 必须传入 result 参数"""
+        try:
+            from telegram_notifier import TelegramNotifier
+
+            TelegramNotifier.reset_instance()
+            notifier = TelegramNotifier(enabled=False)
+            import inspect
+
+            sig = inspect.signature(notifier.send_trade_alert)
+            params = list(sig.parameters.keys())
+            self.assertIn("result", params)
+        except ImportError:
+            self.skipTest("telegram_notifier not available")
 
 
 if __name__ == "__main__":

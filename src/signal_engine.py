@@ -160,6 +160,29 @@ class SignalEngine:
         if setup != "none":
             reasons.append(f"setup={setup}")
 
+        # ── EMA 对齐加分（ema_fast > ema_slow 时趋势顺势加分）──
+        # 原始代码读取了 ema_alignment_bonus / pullback_bonus 但从未使用，此处补全逻辑
+        if ema_fast > ema_slow:
+            add_component(
+                "ema_alignment",
+                ema_alignment_bonus,
+                f"ema_fast({ema_fast:.2f}) > ema_slow({ema_slow:.2f}): bullish alignment",
+            )
+        elif ema_fast < ema_slow:
+            add_component(
+                "ema_alignment",
+                -ema_alignment_bonus,
+                f"ema_fast({ema_fast:.2f}) < ema_slow({ema_slow:.2f}): bearish alignment",
+            )
+
+        # ── Pullback 加分（setup=pullback 时额外奖励）──
+        if setup == "pullback":
+            add_component(
+                "pullback_setup",
+                pullback_bonus,
+                f"pullback setup confirmed (bonus={pullback_bonus})",
+            )
+
         vwap_cfg = signal_features.get("vwap_dev", {})
         vwap_enabled = bool(feature_flags.get("use_vwap_dev", False)) and bool(
             vwap_cfg.get("enabled", False)
@@ -216,20 +239,27 @@ class SignalEngine:
 
         # ========== 关键风控层：Oracle 宏观过滤 ==========
         # 在 S5 过滤之后，评分评级之前，检查宏观环境
+        # [FIX] 增加 feature_flags 开关检查，允许在回测/测试环境中禁用
+        oracle_macro_enabled = bool(feature_flags.get("use_oracle_macro_filter", True))
         oracle_snapshot = context.get("oracle_snapshot")
         macro_blocked = False
-        
-        if oracle_snapshot is not None and not oracle_snapshot.is_trade_permitted:
+
+        if oracle_macro_enabled and oracle_snapshot is not None and not oracle_snapshot.is_trade_permitted:
             # 宏观环境禁止交易（极度恐慌 + 强抛压）
             macro_blocked = True
-            reasons.append(f"macro_blocked: sentiment={oracle_snapshot.sentiment_score:.2f}, obi={oracle_snapshot.orderbook_imbalance:.2f}")
+            reasons.append(
+                f"macro_blocked: sentiment={oracle_snapshot.sentiment_score:.2f}, obi={oracle_snapshot.orderbook_imbalance:.2f}"
+            )
             logger.warning(
                 "[%s] 宏观风控拦截：sentiment=%.2f, obi=%.2f",
                 symbol,
                 oracle_snapshot.sentiment_score,
-                oracle_snapshot.orderbook_imbalance
+                oracle_snapshot.orderbook_imbalance,
             )
-        
+        elif oracle_macro_enabled and oracle_snapshot is None:
+            # Oracle 不可用时记录警告但不阻断交易（降级运行）
+            logger.debug("[%s] oracle_snapshot 不可用，宏观过滤降级跳过", symbol)
+
         blocked_reason = None
         grade = "C"
         side = "WAIT"

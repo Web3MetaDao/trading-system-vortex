@@ -160,6 +160,28 @@ class SignalEngine:
         if setup != "none":
             reasons.append(f"setup={setup}")
 
+        # ── EMA 对齐加分（补全原始版未使用的逻辑）──
+        if ema_fast > ema_slow:
+            add_component(
+                "ema_alignment",
+                ema_alignment_bonus,
+                f"ema_fast({ema_fast:.2f}) > ema_slow({ema_slow:.2f}): bullish alignment",
+            )
+        elif ema_fast < ema_slow:
+            add_component(
+                "ema_alignment",
+                -ema_alignment_bonus,
+                f"ema_fast({ema_fast:.2f}) < ema_slow({ema_slow:.2f}): bearish alignment",
+            )
+
+        # ── Pullback 加分（补全原始版未使用的逻辑）──
+        if setup == "pullback":
+            add_component(
+                "pullback_setup",
+                pullback_bonus,
+                f"pullback setup confirmed (bonus={pullback_bonus})",
+            )
+
         vwap_cfg = signal_features.get("vwap_dev", {})
         vwap_enabled = bool(feature_flags.get("use_vwap_dev", False)) and bool(
             vwap_cfg.get("enabled", False)
@@ -173,9 +195,11 @@ class SignalEngine:
             score_bonus_reclaim = int(vwap_cfg.get("score_bonus_reclaim", 1))
             score_bonus_breakout = int(vwap_cfg.get("score_bonus_breakout", 1))
             score_penalty_exhaustion = int(vwap_cfg.get("score_penalty_exhaustion", 1))
-            
+
             # 优化的 VWAP 计算 - 处理成交量为 0 的情况
-            vwap_price, zscore = self._vwap_price_and_zscore_optimized(snapshot.klines, lookback_bars)
+            vwap_price, zscore = self._vwap_price_and_zscore_optimized(
+                snapshot.klines, lookback_bars
+            )
             vwap_metrics.update(
                 {
                     "lookback_bars": lookback_bars,
@@ -365,26 +389,26 @@ class SignalEngine:
     ) -> tuple[float | None, float | None]:
         """
         优化的 VWAP 计算，处理成交量为 0 的边界情况。
-        
+
         当成交量为 0 时，直接返回 None 而不是降级为 SMA，避免产生误导性信号。
-        
+
         Args:
             klines: K线数据列表
             lookback_bars: 回溯周期
-        
+
         Returns:
             (VWAP价格, Z-Score) 元组，如果数据不足返回 (None, None)
         """
         if not klines:
             return None, None
-        
+
         lookback_bars = max(3, lookback_bars)
         window = klines[-lookback_bars:] if len(klines) >= lookback_bars else klines
-        
+
         prices: list[float] = []
         weighted_total = 0.0
         volume_total = 0.0
-        
+
         for item in window:
             close = item.get("close")
             volume = item.get("volume", 0.0)
@@ -395,26 +419,26 @@ class SignalEngine:
             weight = float(volume or 0.0)
             weighted_total += price * weight
             volume_total += weight
-        
+
         if len(prices) < 3:
             return None, None
-        
+
         # 优化：当总成交量为 0 时，直接返回 None 而不是降级为 SMA
         if volume_total <= 0:
-            logger.warning(f"Zero volume detected in VWAP calculation, skipping VWAP")
+            logger.warning("Zero volume detected in VWAP calculation, skipping VWAP")
             return None, None
-        
+
         vwap_price = weighted_total / volume_total
-        
+
         variance = sum((p - vwap_price) ** 2 for p in prices) / len(prices)
         stddev = variance**0.5
-        
+
         if stddev <= 0:
             return vwap_price, 0.0
-        
+
         last_price = float(prices[-1])
         zscore = (last_price - vwap_price) / stddev
-        
+
         return vwap_price, zscore
 
     def _intermarket_component(

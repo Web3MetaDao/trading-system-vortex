@@ -1,6 +1,6 @@
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,9 +8,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from market_data import MarketSnapshot
-from risk_engine import RiskEngine
-from signal_engine import SignalEngine
+from market_data import MarketSnapshot  # noqa: E402
+from risk_engine import RiskEngine  # noqa: E402
+from signal_engine import SignalEngine  # noqa: E402
 
 
 class _PortfolioStub:
@@ -142,7 +142,7 @@ class SignalRiskRulesTests(unittest.TestCase):
             {"capital_usdt": 100.0, "daily_stop_loss_pct": 3.0, "consecutive_loss_pause": 3}
         )
         today_iso = (
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         )
         portfolio = _PortfolioStub(
             [

@@ -228,8 +228,12 @@ def run_consistency_audit(
             "status": "ok" if not benchmark_snapshot.degraded else "degraded",
             "benchmark_status": "degraded" if benchmark_snapshot.degraded else "ok",
             "intermarket_status": intermarket.get("status", "unknown"),
-            "derivatives_degraded_symbols": [symbol] if derivatives.get("status") == "degraded" else [],
-            "derivatives_partial_symbols": [symbol] if derivatives.get("status") == "partial" else [],
+            "derivatives_degraded_symbols": [symbol]
+            if derivatives.get("status") == "degraded"
+            else [],
+            "derivatives_partial_symbols": [symbol]
+            if derivatives.get("status") == "partial"
+            else [],
         }
 
         replay_signal_full = signal_engine.evaluate(

@@ -8,7 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from execution_engine import (
+from execution_engine import (  # noqa: E402
     AccountInfo,
     APIError,
     BinanceSigner,

@@ -9,13 +9,15 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from binance_websocket import (
+from datetime import UTC  # noqa: E402
+
+from binance_websocket import (  # noqa: E402
     BinanceWebSocketClient,
-    WebSocketConfig,
-    WebSocketReconnector,
     ConnectionState,
     PositionSyncManager,
+    WebSocketConfig,
     WebSocketMessage,
+    WebSocketReconnector,
 )
 
 
@@ -140,7 +142,7 @@ class WebSocketMessageTests(unittest.TestCase):
             event_type="trade",
             symbol="BTCUSDT",
             data={"p": "50000", "q": "1.5"},
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             trace_id="trace-123",
         )
         self.assertEqual(message.event_type, "trade")
@@ -154,7 +156,7 @@ class WebSocketMessageTests(unittest.TestCase):
             event_type="kline",
             symbol="ETHUSDT",
             data={"o": "3000", "h": "3100"},
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         d = message.to_dict()
         self.assertEqual(d["event_type"], "kline")
@@ -208,7 +210,7 @@ class PositionSyncManagerTests(unittest.TestCase):
         from datetime import datetime, timezone
 
         self.sync_manager._sync_errors = 0
-        self.sync_manager._last_sync = datetime.now(timezone.utc)
+        self.sync_manager._last_sync = datetime.now(UTC)
         self.assertTrue(self.sync_manager.is_in_sync())
 
     def test_sync_status_with_errors(self):

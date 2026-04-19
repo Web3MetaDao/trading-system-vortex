@@ -1,7 +1,37 @@
+# ============================================================
+# VORTEX Trading System - 依赖清单 (v2.0 - 机构级重构)
+# ============================================================
+# [FIX v2.0] 补全以下体检发现的缺失依赖：
+#   - ccxt              (arbitrage_engine.py 跨交易所套利)
+#   - stable-baselines3 (train_rl_agent.py 强化学习训练)
+#   - orjson            (automated_trading.py 高性能 JSON 序列化)
+#   - gymnasium         (stable-baselines3 的强化学习环境依赖)
+# ============================================================
+
+# ── 核心运行时 ────────────────────────────────────────────────
 pyyaml>=6.0
 python-dotenv>=1.0.1
 requests>=2.32.0
-websockets>=12.0
+aiohttp>=3.9.0
+
+# ── 数据处理 ─────────────────────────────────────────────────
 pandas>=2.0.0
 numpy>=1.24.0
-aiohttp>=3.9.0
+
+# ── 高性能序列化 ─────────────────────────────────────────────
+# [FIX] automated_trading.py 依赖 orjson，原 requirements.txt 缺失
+orjson>=3.9.0
+
+# ── 网络通信 ─────────────────────────────────────────────────
+websockets>=12.0
+
+# ── 跨交易所套利 ─────────────────────────────────────────────
+# [FIX] arbitrage_engine.py 依赖 ccxt，原 requirements.txt 缺失
+ccxt>=4.0.0
+
+# ── 强化学习 (可选，仅用于 RL Agent 训练) ────────────────────
+# [FIX] train_rl_agent.py 依赖以下包，原 requirements.txt 缺失
+# 注意：torch 体积较大（约 2GB），生产环境可按需安装
+stable-baselines3>=2.0.0
+gymnasium>=0.29.0
+# torch>=2.0.0  # 取消注释以安装 PyTorch（需要额外时间）

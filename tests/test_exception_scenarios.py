@@ -1,29 +1,33 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
-import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from execution_engine import (
-    ExecutionEngine,
-    ExecutionResult,
-    NetworkError,
-    APIError,
-)
-from binance_websocket import (
+from datetime import UTC  # noqa: E402
+
+import websockets  # noqa: E402
+
+from binance_websocket import (  # noqa: E402
     BinanceWebSocketClient,
     ConnectionState,
     WebSocketConfig,
 )
-from market_data import MarketDataClient, MarketSnapshot
-from data_provider import UnifiedDataProvider
-from derivatives_data import DerivativesDataClient
-from intermarket_data import IntermarketDataClient
+from data_provider import UnifiedDataProvider  # noqa: E402
+from derivatives_data import DerivativesDataClient  # noqa: E402
+from execution_engine import (  # noqa: E402
+    APIError,
+    ExecutionEngine,
+    ExecutionResult,
+    NetworkError,
+)
+from intermarket_data import IntermarketDataClient  # noqa: E402
+from market_data import MarketDataClient, MarketSnapshot  # noqa: E402
 
 
 class NetworkErrorRecoveryTests(unittest.TestCase):
@@ -137,8 +141,9 @@ class PartialFillScenarioTests(unittest.TestCase):
         self.assertTrue(result.accepted)
 
     def test_order_status_partial_fill(self):
-        from execution_engine import OrderStatus
         from datetime import datetime, timezone
+
+        from execution_engine import OrderStatus
 
         status = OrderStatus(
             order_id="12345",
@@ -147,8 +152,8 @@ class PartialFillScenarioTests(unittest.TestCase):
             status="PARTIALLY_FILLED",
             filled_qty=0.5,
             avg_price=50000.0,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         self.assertEqual(status.status, "PARTIALLY_FILLED")
@@ -222,7 +227,7 @@ class WebSocketReconnectionTests(unittest.TestCase):
         self.assertTrue(client.is_connected)
 
     def test_reconnector_exponential_backoff(self):
-        from binance_websocket import WebSocketReconnector, ConnectionState
+        from binance_websocket import ConnectionState, WebSocketReconnector
 
         reconnector = WebSocketReconnector()
         reconnector._reconnect_attempts = 3
@@ -358,7 +363,7 @@ class IdempotencyScenarioTests(unittest.TestCase):
 
 class CircuitBreakerScenarioTests(unittest.TestCase):
     def test_consecutive_errors_trigger_circuit_break(self):
-        from binance_websocket import WebSocketReconnector, ConnectionState
+        from binance_websocket import ConnectionState, WebSocketReconnector
 
         reconnector = WebSocketReconnector()
         reconnector._reconnect_attempts = 10

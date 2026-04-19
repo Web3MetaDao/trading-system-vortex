@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import orjson as json
 import logging
 import os
 import time
@@ -11,6 +10,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+import orjson as json
 import websockets
 from websockets.client import WebSocketClientProtocol
 
@@ -133,11 +133,13 @@ class BinanceWebSocketClient:
             self.mode = self.TESTNET_MODE
 
         ws_base = (
-            config.binance_ws_url if self.mode == self.LIVE_MODE else config.testnet_ws_url
-        ) if config else (
-            WebSocketConfig().binance_ws_url
-            if self.mode == self.LIVE_MODE
-            else WebSocketConfig().testnet_ws_url
+            (config.binance_ws_url if self.mode == self.LIVE_MODE else config.testnet_ws_url)
+            if config
+            else (
+                WebSocketConfig().binance_ws_url
+                if self.mode == self.LIVE_MODE
+                else WebSocketConfig().testnet_ws_url
+            )
         )
 
         self.ws_base = ws_base
@@ -266,7 +268,9 @@ class BinanceWebSocketClient:
 
         self.reconnector.record_attempt()
         delay = self.reconnector.get_reconnect_delay()
-        self._logger.info(f"Reconnecting in {delay:.1f}s (attempt {self.reconnector._reconnect_attempts})")
+        self._logger.info(
+            f"Reconnecting in {delay:.1f}s (attempt {self.reconnector._reconnect_attempts})"
+        )
 
         self.reconnector.state = ConnectionState.RECONNECTING
         await asyncio.sleep(delay)
@@ -466,21 +470,25 @@ class PositionSyncManager:
 
         for symbol, local in self._local_positions.items():
             if symbol not in self._remote_positions:
-                orphans.append({
-                    "symbol": symbol,
-                    "local": local,
-                    "reason": "exists locally but not on exchange",
-                })
+                orphans.append(
+                    {
+                        "symbol": symbol,
+                        "local": local,
+                        "reason": "exists locally but not on exchange",
+                    }
+                )
             else:
                 local_qty = local.get("quantity", 0)
                 remote_qty = self._remote_positions[symbol].get("quantity", 0)
                 if abs(local_qty - remote_qty) > 0.0001:
-                    orphans.append({
-                        "symbol": symbol,
-                        "local": local,
-                        "remote": self._remote_positions[symbol],
-                        "reason": "quantity mismatch",
-                    })
+                    orphans.append(
+                        {
+                            "symbol": symbol,
+                            "local": local,
+                            "remote": self._remote_positions[symbol],
+                            "reason": "quantity mismatch",
+                        }
+                    )
 
         return orphans
 

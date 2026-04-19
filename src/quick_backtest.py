@@ -21,10 +21,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DOTENV_CONFIG", ".env")
 load_dotenv()
 
-from market_data import MarketDataClient
-from risk_engine import RiskEngine
-from signal_engine import SignalEngine
-from telegram_notifier import TelegramAlertLevel, TelegramNotifier
+from market_data import MarketDataClient  # noqa: E402
+from risk_engine import RiskEngine  # noqa: E402
+from signal_engine import SignalEngine  # noqa: E402
+from telegram_notifier import TelegramAlertLevel, TelegramNotifier  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("quick_backtest")

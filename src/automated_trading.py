@@ -170,9 +170,7 @@ class AutoSymbolRotator:
 
     def get_enabled_symbols(self) -> list[str]:
         return [
-            s.symbol
-            for s in sorted(self._symbols.values(), key=lambda x: -x.priority)
-            if s.enabled
+            s.symbol for s in sorted(self._symbols.values(), key=lambda x: -x.priority) if s.enabled
         ]
 
     def get_all_symbols(self) -> list[str]:
@@ -300,6 +298,7 @@ class AutomatedTradingLoop:
         config: AutomatedTradingLoopConfig | None = None,
         ws_client: BinanceWebSocketClient | None = None,
         position_sync: PositionSyncManager | None = None,
+        strategy_config: dict | None = None,
     ):
         self.execution_engine = execution_engine
         self.market_data_client = market_data_client
@@ -309,6 +308,8 @@ class AutomatedTradingLoop:
         self.ws_client = ws_client
         self.position_sync = position_sync
         self.config = config or AutomatedTradingLoopConfig()
+        # [FIX] 接收并持久化 strategy_config，确保每次 evaluate 都能透传
+        self._strategy_config: dict = strategy_config or {}
 
         self.state = LoopState.STOPPED
         self.metrics = LoopMetrics()
@@ -388,9 +389,7 @@ class AutomatedTradingLoop:
             self.metrics.consecutive_errors = 0
 
             if self._start_time:
-                self.metrics.uptime_seconds = (
-                    datetime.now(UTC) - self._start_time
-                ).total_seconds()
+                self.metrics.uptime_seconds = (datetime.now(UTC) - self._start_time).total_seconds()
 
         except Exception as e:
             self._logger.error(f"Trading cycle error: {e}")
@@ -412,23 +411,40 @@ class AutomatedTradingLoop:
                 self._logger.warning(f"Failed to fetch snapshot for {symbol}")
                 return
 
-            benchmark_symbol = "BTCUSDT"
-            context = self.data_provider.gather_context(
+            benchmark_symbol = self._strategy_config.get("benchmark_symbol", "BTCUSDT")
+            market_data_cfg = self._strategy_config.get("market_data", {})
+            state_interval = market_data_cfg.get("state_interval", "1h")
+            state_limit = market_data_cfg.get("state_limit", 20)
+            signal_interval = market_data_cfg.get("signal_interval", "1h")
+            signal_limit = market_data_cfg.get("signal_limit", 120)
+
+            # [FIX] 使用 build_context 替代已废弃的 gather_context
+            context = self.data_provider.build_context(
                 benchmark_symbol=benchmark_symbol,
                 watchlist=[symbol],
-                state_interval="1h",
-                state_limit=20,
+                state_interval=state_interval,
+                state_limit=state_limit,
+                signal_interval=signal_interval,
+                signal_limit=signal_limit,
             )
+
+            # 从 MarketContext 中提取 market_state（通过 signal_snapshots 推断）
+            sym_upper = symbol.upper()
+            ctx_snapshot = context.signal_snapshots.get(sym_upper, snapshot)
 
             signal = self.signal_engine.evaluate(
                 symbol,
-                context.get("market_state", "unknown"),
+                "unknown",  # market_state 由 main.py 的 MarketStateEngine 负责，此处降级
                 {
-                    "snapshot": snapshot,
-                    "benchmark_snapshot": context.get("benchmark_snapshot"),
-                    "intermarket": context.get("intermarket"),
-                    "derivatives": context.get("derivatives", {}),
-                    "data_health": context.get("data_health"),
+                    "snapshot": ctx_snapshot if not ctx_snapshot.degraded else snapshot,
+                    # [FIX] 透传 strategy_config，确保信号引擎使用正确参数
+                    "strategy": self._strategy_config,
+                    "benchmark_snapshot": context.benchmark_snapshot,
+                    "intermarket": context.intermarket,
+                    "derivatives": context.derivatives.get(sym_upper, {}),
+                    "data_health": context.data_health,
+                    # [FIX] 注入 oracle_snapshot，启用宏观情绪过滤
+                    "oracle_snapshot": context.oracle_snapshot,
                 },
             )
 

@@ -543,6 +543,7 @@ def build_blocked_reason_experiments(results: list[dict], add_fn, base_overrides
             deep_merge(base_overrides, {}),
         )
 
+
 def build_next_experiments(results: list[dict], learning_summary: dict) -> list[dict]:
     experiments: list[dict] = []
     seen: set[str] = set()
@@ -827,9 +828,9 @@ def build_tuning_plan(results: list[dict], learning_summary: dict) -> dict:
     best_result = None
     if winner:
         for item in ranked:
-            if item.get("candidate") == winner.get("candidate") and item.get("state_profile") == winner.get(
+            if item.get("candidate") == winner.get("candidate") and item.get(
                 "state_profile"
-            ):
+            ) == winner.get("state_profile"):
                 best_result = item
                 break
     if best_result is None and ranked:
@@ -848,9 +849,13 @@ def build_tuning_plan(results: list[dict], learning_summary: dict) -> dict:
             f"Promote winner {winner.get('candidate')} + {winner.get('state_profile')} as the current default research baseline."
         )
     if recommended_patch.get("strategy"):
-        deployment_notes.append("Apply the strategy patch in config/strategy.yaml only after backtest confirmation.")
+        deployment_notes.append(
+            "Apply the strategy patch in config/strategy.yaml only after backtest confirmation."
+        )
     if recommended_patch.get("risk"):
-        deployment_notes.append("Apply the risk patch in config/risk.yaml only after paper validation.")
+        deployment_notes.append(
+            "Apply the risk patch in config/risk.yaml only after paper validation."
+        )
     if learning_summary.get("deprioritize"):
         deployment_notes.append(
             "Keep deprioritized setups disabled or constrained in the next round: "
@@ -903,27 +908,18 @@ def write_tuning_plan_artifacts(payload: dict, base_dir: Path) -> dict:
     strategy_payload = patch.get("strategy", {}) if isinstance(patch, dict) else {}
     risk_payload = patch.get("risk", {}) if isinstance(patch, dict) else {}
 
-    strategy_path.write_text(json.dumps(strategy_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    strategy_path.write_text(
+        json.dumps(strategy_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     risk_path.write_text(json.dumps(risk_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tuning_plan_path.write_text(json.dumps(tuning_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    tuning_plan_path.write_text(
+        json.dumps(tuning_plan, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     return {
         "strategy_patch": str(strategy_path),
         "risk_patch": str(risk_path),
         "tuning_plan": str(tuning_plan_path),
-    }
-
-
-def build_lab_meta(results: list[dict]) -> dict:
-    zero_trade_profiles = sum(1 for r in results if r["performance"]["closed_trades"] == 0)
-    tradable_profiles = len(results) - zero_trade_profiles
-    return {
-        "profile_count": len(results),
-        "tradable_profiles": tradable_profiles,
-        "zero_trade_profiles": zero_trade_profiles,
-        "zero_trade_ratio": (
-            round((zero_trade_profiles / len(results)) * 100, 2) if results else 0.0
-        ),
     }
 
 
@@ -1584,7 +1580,9 @@ def main() -> None:
         out_path.write_text(text, encoding="utf-8")
         print(f"Saved lab results to {out_path}")
 
-    print(f"Saved tuning artifacts to {artifact_paths['strategy_patch']}, {artifact_paths['risk_patch']}, {artifact_paths['tuning_plan']}")
+    print(
+        f"Saved tuning artifacts to {artifact_paths['strategy_patch']}, {artifact_paths['risk_patch']}, {artifact_paths['tuning_plan']}"
+    )
     print(text)
 
 
