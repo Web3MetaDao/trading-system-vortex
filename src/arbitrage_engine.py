@@ -232,7 +232,11 @@ class ArbitrageEngine:
         remaining = target_qty
         total_cost = 0.0
 
-        for price, qty in levels:
+        for level in levels:
+            # CCXT order book levels can be [price, size] or [price, size, ...]
+            # Use index access to safely handle both 2-field and 3-field formats
+            price = float(level[0])
+            qty = float(level[1])
             if remaining <= 0:
                 break
             fill = min(remaining, qty)
